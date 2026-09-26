@@ -30,8 +30,33 @@ cmake --build build
 - Include dirs must contain `Headers`, `Headers/SP` (SPBasic.h), `Util`, `Resources`.
 - Do **not** define `AE_OS_MAC` on the command line — AEConfig.h defines it; a redefinition
   is a warning and was previously a source of confusion.
+- The SDK helper `.cpp` files (`Smart_Utils.cpp`, `AEGP_SuiteHandler.cpp`,
+  `MissingSuiteError.cpp`) must be compiled into the target or the link fails.
 - AppleClang has no OpenMP: fine, the port has no OpenMP (see below).
-- Rez/PiPL requires full Xcode. Without a PiPL resource AE will not list the plug-in.
+
+### macOS packaging (learned the hard way — AE silently ignores wrong layouts)
+
+Verified against a known-working, Xcode-26-built Mac AE plug-in
+(`D:\Dev\projects\F-s-PluginsProjects_forMac\whiteInOut`, inspect its
+`Mac/build/.../whiteInOut.plugin`):
+
+- The plug-in executable contains **no PiPL and no `__TEXT,__rsrc`** at all.
+- The PiPL lives in **`Contents/Resources/<ProductName>.rsrc`** — a classic resource-fork
+  image stored in the file's **data fork** (header: `dataOff=0x100, mapOff=…`).
+- Xcode produces it with (exact args from its build manifest; `-arch` matches the build):
+  `Rez -o <bundle>/Contents/Resources/<name>.rsrc -d SystemSevenOrLater=1 -useDF -script Roman
+   -arch arm64 -arch x86_64 -i <SDK>/Headers -i <SDK>/Headers/SP -i <SDK>/Resources <name>PiPL.r`
+- `-useDF` is essential: it keeps the resource image in the data fork so the bundle stays
+  code-signable. Default Rez output goes to a resource-fork **xattr**, which (a) does not survive
+  `xattr -cr` and (b) makes `codesign` fail with "resource fork, Finder information, or similar
+  detritus not allowed".
+- The bundle is ad-hoc signed (`codesign --force --sign -`) after the .rsrc is in place.
+  Apple Silicon refuses to load binaries whose signature is broken.
+- Without a readable PiPL, AE's Effect Manager simply never lists the effect (no error dialog).
+
+If the plug-in still does not appear: check `Rez` ran, then
+`ls build/OLMDirectionalBlur.plugin/Contents/Resources/` and
+`codesign -dv --verbose=2 build/OLMDirectionalBlur.plugin`.
 
 ## Identity / PiPL (decoded from the PE `.rsrc` PiPL)
 

@@ -82,19 +82,27 @@ if(NOT XATTR_EXE)
     set(XATTR_EXE /usr/bin/xattr)
 endif()
 
-# Rez modifies the linked binary: the linker's ad-hoc signature is invalidated
-# and Apple Silicon refuses to load it, so re-sign the bundle afterwards
-# (mirrors Xcode's Rez-then-CodeSign phase order). Rez leaves extended
-# attributes behind which codesign rejects ("detritus not allowed"), so strip
-# them with xattr -cr first.
+# Compile the PiPL into a data-fork resource file at
+# Contents/Resources/<name>.rsrc. This mirrors what Xcode's (legacy) Rez build
+# phase produces for a CFBundle target - verified against a working Mac AE
+# plug-in built by Xcode 26: the executable contains no PiPL at all, AE reads
+# it from the .rsrc bundle resource. Flags copied from Xcode's build manifest
+# (including -useDF, which is what puts the resource image in the data fork
+# so the bundle stays code-signable).
 add_custom_command(TARGET OLMDirectionalBlur POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "$<TARGET_BUNDLE_DIR:OLMDirectionalBlur>/Contents/Resources"
     COMMAND ${REZ_CMD}
-        -d __MACH__
+        -o "$<TARGET_BUNDLE_DIR:OLMDirectionalBlur>/Contents/Resources/OLMDirectionalBlur.rsrc"
+        -d SystemSevenOrLater=1
+        -useDF
+        -script Roman
+        -arch arm64
+        -arch x86_64
         -i "${AE_SDK}/Headers"
+        -i "${AE_SDK}/Headers/SP"
         -i "${AE_SDK}/Resources"
-        -o "$<TARGET_FILE:OLMDirectionalBlur>"
-        -t 'PiPL' -c 'eFKT'
         "${CMAKE_CURRENT_SOURCE_DIR}/OLMDirectionalBlurPiPL.r"
     COMMAND "${XATTR_EXE}" -cr "$<TARGET_BUNDLE_DIR:OLMDirectionalBlur>"
     COMMAND "${CODESIGN_EXE}" --force --sign - "$<TARGET_BUNDLE_DIR:OLMDirectionalBlur>"
-    COMMENT "Embedding PiPL resource and re-signing bundle (ad-hoc)")
+    COMMENT "Compiling PiPL to Contents/Resources and signing bundle (ad-hoc)")
