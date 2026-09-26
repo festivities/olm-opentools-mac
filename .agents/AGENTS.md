@@ -48,6 +48,8 @@ Rotate input by −angle (alpha-weighted bilinear, `sub_180001EC0`) → size-var
 
 ## Next steps
 
-1. Build on a Mac: `cmake -S OLMDirectionalBlur -B build -DAE_SDK=<sdk>/Examples -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" && cmake --build build --config Release`.
+1. Build on a Mac (out-of-source only; in-source is refused by CMakeLists):
+   `cmake -S OLMDirectionalBlur -B build -DAE_SDK=/abs/path/AdobeAfterEffectsSDK_26.5_MacOS/Examples -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release`
+   then `cmake --build build`. AppleClang has no OpenMP — expected, code runs serial. Full Xcode (not just CLT) is needed for Rez/PiPL.
 2. Smoke-test in AE 2026 (apply, scrub Seed/Thickness, Layer-noise mode, 8/16/32-bit).
 3. Pixel-compare Mac vs Windows renders; closest open fidelity risks: LUT index rounding in splats, MSVC-`rand()` sequence assumptions, size-pass group centre/width terms.

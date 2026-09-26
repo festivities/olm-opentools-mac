@@ -9,6 +9,10 @@
 cmake_minimum_required(VERSION 3.28)
 project(OLMDirectionalBlur LANGUAGES C CXX)
 
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    message(FATAL_ERROR "In-source builds not allowed (they pollute the repo and confuse bundle output). Run: cmake -S . -B build ...")
+endif()
+
 if(NOT DEFINED AE_SDK)
     message(FATAL_ERROR "Pass -DAE_SDK=<path to SDK Examples dir> (contains Headers/, Util/, Resources/)")
 endif()
@@ -55,4 +59,6 @@ if(REZ)
             -t 'PiPL' -c 'eFKT'
             ${CMAKE_CURRENT_SOURCE_DIR}/OLMDirectionalBlurPiPL.r
         COMMENT "Compiling PiPL resource")
+else()
+    message(WARNING "Rez not found - PiPL will NOT be embedded and AE will not list the plug-in. Install full Xcode (not just CLT).")
 endif()
