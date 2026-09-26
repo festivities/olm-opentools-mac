@@ -77,10 +77,16 @@ find_program(CODESIGN_EXE NAMES codesign PATHS /usr/bin)
 if(NOT CODESIGN_EXE)
     message(FATAL_ERROR "codesign not found")
 endif()
+find_program(XATTR_EXE NAMES xattr PATHS /usr/bin)
+if(NOT XATTR_EXE)
+    set(XATTR_EXE /usr/bin/xattr)
+endif()
 
 # Rez modifies the linked binary: the linker's ad-hoc signature is invalidated
 # and Apple Silicon refuses to load it, so re-sign the bundle afterwards
-# (mirrors Xcode's Rez-then-CodeSign phase order).
+# (mirrors Xcode's Rez-then-CodeSign phase order). Rez leaves extended
+# attributes behind which codesign rejects ("detritus not allowed"), so strip
+# them with xattr -cr first.
 add_custom_command(TARGET OLMDirectionalBlur POST_BUILD
     COMMAND ${REZ_CMD}
         -d __MACH__
@@ -89,5 +95,6 @@ add_custom_command(TARGET OLMDirectionalBlur POST_BUILD
         -o "$<TARGET_FILE:OLMDirectionalBlur>"
         -t 'PiPL' -c 'eFKT'
         "${CMAKE_CURRENT_SOURCE_DIR}/OLMDirectionalBlurPiPL.r"
+    COMMAND "${XATTR_EXE}" -cr "$<TARGET_BUNDLE_DIR:OLMDirectionalBlur>"
     COMMAND "${CODESIGN_EXE}" --force --sign - "$<TARGET_BUNDLE_DIR:OLMDirectionalBlur>"
     COMMENT "Embedding PiPL resource and re-signing bundle (ad-hoc)")
