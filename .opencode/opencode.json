@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "references": {
+    "olm-opentools-windows": {
+      "path": "./olm-opentools-windows",
+      "description": "Compiled After Effects .aex plug-in files for Windows. READ-ONLY. If need to dissect files, copy to %temp% and work with that copy instead."
+    },
+    "AfterEffectsSDK_26.5_win": {
+      "path": "./AfterEffectsSDK_26.5_win",
+      "description": "After Effects 26.5 SDK for Windows. READ-ONLY."
+    },
+    "AfterEffectsSDK_26.5_MacOS": {
+      "path": "./AfterEffectsSDK_26.5_MacOS",
+      "description": "After Effects 26.5 SDK for MacOS. READ-ONLY."
+    },
+  }
+}
