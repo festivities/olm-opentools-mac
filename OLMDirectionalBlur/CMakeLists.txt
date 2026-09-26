@@ -26,11 +26,10 @@ add_library(OLMDirectionalBlur MODULE OLMDirectionalBlur.cpp)
 target_include_directories(OLMDirectionalBlur PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${AE_SDK}/Headers
+    ${AE_SDK}/Headers/SP
     ${AE_SDK}/Util
     ${AE_SDK}/Resources
 )
-
-target_compile_definitions(OLMDirectionalBlur PRIVATE AE_OS_MAC=1)
 
 # Optional OpenMP (mirrors Windows VCOMP140 usage). Builds fine without it.
 find_package(OpenMP)
@@ -52,7 +51,7 @@ find_program(REZ Rez /usr/bin)
 if(REZ)
     add_custom_command(TARGET OLMDirectionalBlur POST_BUILD
         COMMAND ${REZ}
-            -d __MACH__ -d AE_OS_MAC=1
+            -d __MACH__
             -i ${AE_SDK}/Headers
             -i ${AE_SDK}/Resources
             -o $<TARGET_FILE:OLMDirectionalBlur>
