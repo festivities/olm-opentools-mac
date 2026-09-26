@@ -21,7 +21,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
 
-add_library(OLMDirectionalBlur MODULE OLMDirectionalBlur.cpp)
+add_library(OLMDirectionalBlur MODULE
+    OLMDirectionalBlur.cpp
+    # SDK helper implementations (samples compile these alongside the plug-in):
+    ${AE_SDK}/Util/Smart_Utils.cpp          # UnionLRect, IsEmptyRect, ...
+    ${AE_SDK}/Util/AEGP_SuiteHandler.cpp    # AEGP_SuiteHandler ctor/dtor
+    ${AE_SDK}/Util/MissingSuiteError.cpp    # AEGP_SuiteHandler::MissingSuiteError()
+)
 
 target_include_directories(OLMDirectionalBlur PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
