@@ -52,18 +52,42 @@ set_target_properties(OLMDirectionalBlur PROPERTIES
     VISIBILITY_INLINES_HIDDEN OFF
 )
 
-# Rez-compile the PiPL resource (macOS SDK convention).
-find_program(REZ Rez /usr/bin)
-if(REZ)
-    add_custom_command(TARGET OLMDirectionalBlur POST_BUILD
-        COMMAND ${REZ}
-            -d __MACH__
-            -i ${AE_SDK}/Headers
-            -i ${AE_SDK}/Resources
-            -o $<TARGET_FILE:OLMDirectionalBlur>
-            -t 'PiPL' -c 'eFKT'
-            ${CMAKE_CURRENT_SOURCE_DIR}/OLMDirectionalBlurPiPL.r
-        COMMENT "Compiling PiPL resource")
+# Rez-compile the PiPL resource (required - without it AE ignores the plug-in).
+# Locate Rez through xcrun so both Xcode and Command Line Tools setups work.
+execute_process(
+    COMMAND xcrun -f Rez
+    RESULT_VARIABLE _rez_rc
+    OUTPUT_VARIABLE _rez_path
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(_rez_rc EQUAL 0 AND EXISTS "${_rez_path}")
+    set(REZ_CMD xcrun Rez)   # run through xcrun so the SDK Rez headers resolve
 else()
-    message(WARNING "Rez not found - PiPL will NOT be embedded and AE will not list the plug-in. Install full Xcode (not just CLT).")
+    find_program(REZ_FALLBACK NAMES Rez PATHS /usr/bin)
+    if(REZ_FALLBACK)
+        set(REZ_CMD "${REZ_FALLBACK}")
+    else()
+        message(FATAL_ERROR
+            "Rez not found (install full Xcode). Without an embedded PiPL resource "
+            "After Effects will not load the plug-in at all.")
+    endif()
 endif()
+
+find_program(CODESIGN_EXE NAMES codesign PATHS /usr/bin)
+if(NOT CODESIGN_EXE)
+    message(FATAL_ERROR "codesign not found")
+endif()
+
+# Rez modifies the linked binary: the linker's ad-hoc signature is invalidated
+# and Apple Silicon refuses to load it, so re-sign the bundle afterwards
+# (mirrors Xcode's Rez-then-CodeSign phase order).
+add_custom_command(TARGET OLMDirectionalBlur POST_BUILD
+    COMMAND ${REZ_CMD}
+        -d __MACH__
+        -i "${AE_SDK}/Headers"
+        -i "${AE_SDK}/Resources"
+        -o "$<TARGET_FILE:OLMDirectionalBlur>"
+        -t 'PiPL' -c 'eFKT'
+        "${CMAKE_CURRENT_SOURCE_DIR}/OLMDirectionalBlurPiPL.r"
+    COMMAND "${CODESIGN_EXE}" --force --sign - "$<TARGET_BUNDLE_DIR:OLMDirectionalBlur>"
+    COMMENT "Embedding PiPL resource and re-signing bundle (ad-hoc)")
