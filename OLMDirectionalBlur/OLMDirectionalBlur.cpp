@@ -995,6 +995,13 @@ PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data, PF_SmartRenderExtra
     if (!err)
         ERR(checkout_params(in_data, &p));
 
+    // The Windows kernel's first action is utils->copy(input, output) (the
+    // unidentified 5-arg call at sub_180004A20/_3C90/_57B0 +0). It is what
+    // makes the all-zero-parameter early-out harmless: with default settings
+    // the layer passes through unchanged instead of being left unwritten.
+    if (!err && input && output)
+        ERR(in_data->utils->copy(in_data->effect_ref, input, output, nullptr, nullptr));
+
     if (!err && input && output) {
         AEFX_SuiteScoper<PF_WorldSuite2> ws(in_data, kPFWorldSuite, kPFWorldSuiteVersion2, out_data);
         PF_PixelFormat fmt = PF_PixelFormat_INVALID;

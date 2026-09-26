@@ -138,8 +138,11 @@ sub_180004A20=8-bit, sub_180003C90=16-bit, sub_1800057B0=32-bit; core sub_180003
    `(int)(v·255)` / `(int)(v·32768)` truncating), alpha raw.
 
 Downsampling: blur strengths/fades and Thickness scaled by `downsample_x.num/den`
-(`(int)(v*scale)` for the ints); if all four blur/fade values are 0 after scaling the
-original returns **without writing the output world** (ported as-is).
+(`(int)(v*scale)` for the ints); **before** that, the kernel's very first action is
+`in_data->utils->copy(effect_ref, input_world, output_world, NULL, NULL)` (the 5-arg
+unidentified call at the start of all three kernels). Do not drop it: it is what makes the
+"all four blur/fade values are 0" early-out harmless (layer passes through unchanged on
+Windows; without the copy the output is left unwritten and the layer disappears in AE 26.5).
 
 ## UPDATE_PARAMS_UI (sub_180007EA0 + sub_1800081C0)
 
