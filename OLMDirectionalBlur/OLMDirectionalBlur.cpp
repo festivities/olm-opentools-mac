@@ -360,12 +360,12 @@ void size_pass(Ctx &c, int x, int y, float weight) {
     for (int k = 1; k < reach_f; ++k) {
         float f = c.lut_front_fade[(size_t)(int)((float)k * inv)];
         sum += f;
-        asum += f * c.A[idx + (size_t)k * 4u + 3u];
+        asum += f * c.A[c.pix(x + k, y) * 4u + 3u];   // alpha(pix + k)
     }
     for (int k = 1; k < reach_b; ++k) {
         float f = c.lut_back_fade[(size_t)(int)((float)k * inv)];
         sum += f;
-        asum += f * c.A[idx - (size_t)k * 4u + 3u];
+        asum += f * c.A[c.pix(x - k, y) * 4u + 3u];   // alpha(pix - k)
     }
     float v71 = asum / sum;
     dst[0] = v71 * src[0];

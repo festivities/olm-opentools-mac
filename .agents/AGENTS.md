@@ -163,6 +163,20 @@ At UPDATE_PARAMS_UI: checkout Noise Type; `AEGP_GetEffectLayer` + `AEGP_GetLayer
 4. Memory: canvases/planes are allocated like the original (≈66 bytes per canvas pixel,
    canvas ≈ (W+H)²), i.e. hundreds of MB for 4K layers. Same as Windows.
 
+## Bug log (things that shipped broken and why)
+
+- Missing PiPL → AE never listed the effect. The PiPL must live in
+  `Contents/Resources/<name>.rsrc` (see packaging section), not in the executable.
+- Disappearing layer with default parameters → the kernels' first action is
+  `utils->copy(input, output)`; without it the all-zero early-out left the output unwritten.
+- **"Alpha Fade fades the whole image uniformly"** → in `size_pass()` the neighbour alpha reads
+  mixed a *pixel* index (`c.pix(x, y)`) with *float* offsets (`k * 4u`), so the fade window
+  sampled wrong pixels (≈1/4 of the intended position, often transparent canvas), collapsing
+  every pixel's windowed alpha to ≈0.03. The backward expression could also underflow
+  `size_t`. Fixed by reading `c.A[c.pix(x ± k, y) * 4u + 3u]`.
+  Lesson: the binary indexes the canvas in *float* units (`a3 + 4*v15 + 12` where
+  `v15 = 4*pixel`); always convert pixel↔float explicitly in the port.
+
 ## Files
 
 - `OLMDirectionalBlur/OLMDirectionalBlur.h` — param IDs, `OLMDBParams`, identity macros.
