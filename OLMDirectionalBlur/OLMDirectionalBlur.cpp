@@ -139,9 +139,10 @@ float sample_noise(const NoiseField &nf, int x, int y, bool smooth) {
 void build_lut(std::vector<float> &lut, int n) {
     lut.resize((size_t)n);
     float sigma = (float)n / 3.0f;
-    float denom = sigma * sigma + sigma * sigma + 0.00001f;
+    float sigma_sq = sigma * sigma;
+    float denom = (float)((double)sigma_sq + (double)sigma_sq + 0.00001);
     for (int i = 0; i < n; ++i)
-        lut[(size_t)i] = expf((float)(-(double)(i * i) / (double)denom));
+        lut[(size_t)i] = expf((float)(-(i * i)) / denom);
 }
 
 //=========================================================== rotations ======

@@ -3,14 +3,15 @@
 Port of OLM OpenTools (Windows-only AE plug-ins for anime compositing) to macOS.
 Starting with **OLM Directional Blur**. Updated regularly.
 
-## Status (2026-09-26, second pass)
+## Status (2026-09-28)
 
 | Item | State |
 |---|---|
-| Windows `OLMDirectionalBlur.aex` (1.1.1, x64) | **Fully re-decompiled** (idalib session `ece2754d`, DB `OLMDirectionalBlur.aex.i64`) |
-| `OLMDirectionalBlur/` macOS source | Rewritten from the decompile; **compiles clean** with `g++ -fsyntax-only -Wall -Wextra` against the SDK headers; not yet built in Xcode |
+| Windows `OLMDirectionalBlur.aex` (1.1.1, x64) | Render and Alpha Fade paths examined with idalib; original reference is read-only |
+| `OLMDirectionalBlur/` macOS source | Builds, loads, and renders in AE 2026 on Mac; user confirms Alpha Fade works after clearing AE's cached plug-in |
 | MT19937 (noise RNG) | Verified against mt19937 reference vectors |
-| AE 2026 Mac smoke test + Windows pixel-compare | TODO |
+| Alpha Fade in AE | **Resolved in user testing**: patched plug-in was cached; clearing AE's cache refreshed it and Alpha Fade works |
+| Windows-versus-Mac pixel comparison | TODO |
 
 **Warning to future agents:** the first pass of this port (commit `8cf0800`) contained a
 plausible-looking but *invented* render core (MSVC `rand`, rotate/`0.5+0.5*noise` weights,
@@ -152,15 +153,46 @@ At UPDATE_PARAMS_UI: checkout Noise Type; `AEGP_GetEffectLayer` + `AEGP_GetLayer
 - Smooth/Block → hide **Noise Layer** (param 17)
 - Layer → hide **Seed, Offset, Thickness** (18/19/20)
 
+## Alpha Fade investigation (2026-09-28; resolved in AE)
+
+- IDA: param IDs 6/11 are checked out at `sub_180006C50` (around `0x180006e7a`
+  and `0x180006fb4`) into the front/back fade lengths at scratch `+76/+84`.
+  The kernels truncate each length after multiplying by `downsample_x`.
+  `sub_180001000` starts taps at `k=1` with `k < reach`: an effective reach of
+  0 or 1 **cannot** change the result. Reach is truncated from the scaled Fade
+  length multiplied by `pow(component_area/max_area, Size Variation)`, so
+  smaller groups with Size Variation can require a larger Fade value. At
+  default Size Variation, Fade=1 at full resolution or Fade=4 at quarter
+  resolution is a no-op even with Blur Strength > 0. This is original Windows
+  behavior, not a Mac-only fix.
+- The initial post-fix report that Alpha Fade appeared inert was caused by After Effects
+  continuing to use its cached plug-in. User cleared AE's cache, the patched binary refreshed,
+  and confirmed Alpha Fade works. Do this before investigating an apparent stale plug-in:
+  replace the bundle, clear AE's plug-in/cache state, and relaunch AE.
+- `OLMDirectionalBlur/test_alpha_fade.cpp` uses a fake AE host but runs production
+  `EffectMain` through PARAMS_SETUP → SMART_PRE_RENDER → SMART_RENDER, using
+  both blur strengths = 8, fade 0 vs 8, mixed alpha, and 8/16/32-bpc writers.
+  All three outputs change. With a 161×161 constant-alpha plateau, 2,268
+  pixels change only in the edge band, alpha only; center RGB/alpha do not
+  change. The test also verifies the short-window no-op cases. On Windows,
+  from `OLMDirectionalBlur/`, run it with MinGW and the Windows 26.5 SDK:
+
+  ```cmd
+  set "SDK=D:\Dev\projects\olm-opentools-mac\.opencode\AfterEffectsSDK_26.5_win\Examples"
+  g++ -std=c++17 -D_WIN32 -D_WINDOWS -Wno-multichar -Wno-unknown-pragmas -Wno-missing-field-initializers -ffunction-sections -fdata-sections -I"%SDK%\Headers" -I"%SDK%\Headers\SP" -I"%SDK%\Util" -I"%SDK%\Resources" test_alpha_fade.cpp "%SDK%\Util\AEGP_SuiteHandler.cpp" "%SDK%\Util\MissingSuiteError.cpp" "%SDK%\Util\Smart_Utils.cpp" -Wl,--gc-sections -o "%TEMP%\alpha-fade-test.exe" && "%TEMP%\alpha-fade-test.exe"
+  ```
+- IDA `sub_180001830` supports the float/double rounding correction in
+  `build_lut()`. The user-confirmed cache refresh resolved the reported AE symptom;
+  the fake-host test remains a regression check, not a substitute for host testing.
+- Windows-versus-Mac pixel-exact parity has not been verified.
+
 ## Known deliberate deviations from the binary
 
 1. Noise field table index: original underflows for negative Offset (OOB table read); the
    port wraps negatives (`t += 100`) instead.
-2. The kernel's `utils[8]` sanity call `(effect_ref, input_world, output_world, 0, 0)` was not
-   reproduced (purpose unidentified; result only aborts the render on error).
-3. Rows are processed serially in one loop (identical output; only the original's chunking is
+2. Rows are processed serially in one loop (identical output; only the original's chunking is
    cosmetic).
-4. Memory: canvases/planes are allocated like the original (≈66 bytes per canvas pixel,
+3. Memory: canvases/planes are allocated like the original (≈66 bytes per canvas pixel,
    canvas ≈ (W+H)²), i.e. hundreds of MB for 4K layers. Same as Windows.
 
 ## Bug log (things that shipped broken and why)
@@ -176,6 +208,9 @@ At UPDATE_PARAMS_UI: checkout Noise Type; `AEGP_GetEffectLayer` + `AEGP_GetLayer
   `size_t`. Fixed by reading `c.A[c.pix(x ± k, y) * 4u + 3u]`.
   Lesson: the binary indexes the canvas in *float* units (`a3 + 4*v15 + 12` where
   `v15 = 4*pixel`); always convert pixel↔float explicitly in the port.
+- After updating a plug-in, AE may continue displaying/using its cached copy. The user confirmed
+  the Alpha Fade fix worked after clearing AE's cache; check cache/restart before concluding a
+  rebuilt plug-in has no effect.
 
 ## Files
 
