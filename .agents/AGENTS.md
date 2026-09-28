@@ -1,9 +1,10 @@
 # AGENTS.md — olm-opentools-mac
 
 Port of OLM OpenTools (Windows-only AE plug-ins for anime compositing) to macOS.
-Starting with **OLM Directional Blur**. Updated regularly.
+Plug-ins: **OLM Directional Blur** (done), **OLM RadialBlur** (source complete, not yet
+smoke-tested in AE). Updated regularly.
 
-## Status (2026-09-28)
+## Status (2026-09-29)
 
 | Item | State |
 |---|---|
@@ -11,7 +12,9 @@ Starting with **OLM Directional Blur**. Updated regularly.
 | `OLMDirectionalBlur/` macOS source | Builds, loads, and renders in AE 2026 on Mac; user confirms Alpha Fade works after clearing AE's cached plug-in |
 | MT19937 (noise RNG) | Verified against mt19937 reference vectors |
 | Alpha Fade in AE | **Resolved in user testing**: patched plug-in was cached; clearing AE's cache refreshed it and Alpha Fade works |
-| Windows-versus-Mac pixel comparison | TODO |
+| Windows `OLMRadialBlur.aex` (1.3.0, x64) | Decompiled by two subagents; all load-bearing facts re-verified in IDA by the main agent |
+| `OLMRadialBlur/` macOS source | Complete; MinGW syntax check + production-path test pass (8/16/32 bpc). **Not yet built on a Mac / tested in AE.** |
+| Windows-versus-Mac pixel comparison | Deferred by user ("99% of the look" is the bar) |
 
 **Warning to future agents:** the first pass of this port (commit `8cf0800`) contained a
 plausible-looking but *invented* render core (MSVC `rand`, rotate/`0.5+0.5*noise` weights,
@@ -185,6 +188,74 @@ At UPDATE_PARAMS_UI: checkout Noise Type; `AEGP_GetEffectLayer` + `AEGP_GetLayer
   `build_lut()`. The user-confirmed cache refresh resolved the reported AE symptom;
   the fake-host test remains a regression check, not a substitute for host testing.
 - Windows-versus-Mac pixel-exact parity has not been verified.
+
+## OLMRadialBlur (2026-09-29; source complete, AE smoke test pending)
+
+Decompiled from `.opencode/olm-opentools-windows/OLMRadialBlur/OLMRadialBlur.aex`
+(1.3.0, 638 funcs). Reference: `.aex.i64` in the same directory. Verified facts:
+
+- **PiPL**: resource id 16000 in the PE `.rsrc` (raw offset 0x2D6B0). Name/Match
+  `OLM RadialBlur`, Category `OLM Plug-ins`, spec 13.29, version 622592
+  (1.3.0), out_flags `0x06008040` (adds CUSTOM_UI vs DirectionalBlur),
+  out_flags2 `0x08001408`, entry `entry_point` (port exports `EffectMain`).
+- **Dispatch**: entry 0x18000F970; PARAMS_SETUP `sub_1800034D0` (31 params, ids
+  1-31 with 26=Repeat Border and 28-31 = Offset Mode/Offset pairs inserted
+  inside the groups), UPDATE_PARAMS_UI `sub_180003CB0`, SMART_PRE_RENDER
+  `0x180004020`, SMART_RENDER `0x180004100` (bitdepth switch at 8/16/32 →
+  kernels 0x180006970/0x180006160/0x180007180). RENDER is a no-op; no sequence
+  data. About: "OLM RadialBlur 1.3\rApply circular and directional blur".
+- **UPDATE_PARAMS_UI** does two things: AEGP dynamic-stream HIDDEN for noise
+  params (id 21 shown only for Noise Type=Layer; 22/23/24 hidden then — same
+  pattern as DirectionalBlur), plus PF_ParamUtilsSuite3 `PF_UpdateParamUI`
+  DISABLE: ids 29/28 and 31/30 disabled unless Blur Type=Rotation; ids 4/8
+  (Strength) disabled when Rotation+Override mode.
+- **Param checkout** `sub_180007AE0` → scratch: +32 blurType, +40/+48 center
+  doubles (PointParamSuite value scaled by downsample den/num), +56 brightness,
+  +60 noiseVar/100, +64 sizeVar/100 (+68 active >1e-4), +72 scale
+  (downsample_x.num/den), +80 noiseType, +84/88 +92/96 offset mode/offset,
+  +100/+104 strengths, +108/+112 fades, +116 repeatBorder, +120 ratio,
+  **+124 angle in RADIANS** — both ANGLE params (13 Ellipse Angle and 23 Noise
+  Offset) go through `(double)fixed * 0.0000002663161090079238` (=(π/180)/65536)
+  at checkout; the cores feed the value straight to cosf/sinf. +128 = 1/quality
+  (fallback 0.2 if ≤0), +252 seed, +256 noiseOffset (radians), +260 thickness
+  (scaled by +72 in the kernel).
+- **Kernels**: first call is the 5-arg `utils->copy` (pass-through); early-out
+  unless one of (+100, +104, +88, +96, +108, +112) is nonzero — brightness
+  alone does NOT render. No iterate suites: kernels read world pixels directly;
+  decode 8-bit /255, 16-bit /32768. Writers: RGB `trunc(min(1, brightness*c) *
+  255|32768)`, alpha raw `trunc(a * 255|32768)`.
+- **Algorithm**: polar-domain blur. Forward map
+  `x = cx + cosA*(R cosθ) − sinA*(R sinθ · ratio)`, inverse
+  `u = cosA·dx + sinA·dy; v = (cosA·dy − sinA·dx)/ratio; atan2f(v,u)+2π`. Radial
+  rows `low = max(0, trunc(minDist/ratio)−2) … maxDist+2`; angle count
+  `trunc(360/qualityStep)`. Zoom layout angle×radius, Rotation radius×angle
+  (wraps). Size factor is LINEAR: `(area/maxArea)·sizeVar + (1−sizeVar)` — no
+  pow, unlike DirectionalBlur. Noise same MT19937 grid (101 table entries
+  drawn first, then 2 draws/cell; table offset = the Offset param's radian
+  value; `j = 100*draw + offset`, wrap ≥100, OOB for negatives).
+- **Direction conventions (verified, easy to get wrong)**: strength scatter —
+  inner table toward LOWER indices, outer toward HIGHER (zoom 0x180009D50
+  taps [r8-4]/[rdx+4]; rotation sub_180001C90 dir 1 = a4−1). Edge-fade pass —
+  the OPPOSITE: outer fade toward LOWER indices, inner toward HIGHER
+  (zoom sub_18000A4D0 LUT@+16096 backward; rotation sub_180002780
+  LUT@+240112 backward). The initial implementation had zoom fades inverted;
+  fixed after IDA verification.
+- **Rotation specifics**: strengths/offsets/fades scaled by double
+  `0.2/qualityStep` then cvtts2si; strength LUTs fixed length 30000; offset
+  combined with row offset `trunc(offset*rows/2/(row+1))` by mode (Add/Max/
+  Override), capped 3000; LUT index `k * (30000/reach integer div)`.
+- **LUT builder** `sub_18000AA00` (differs from DirectionalBlur's!):
+  `den0 = 2·(n²·0.11111112f)` in float, `denom = float(double(den0)+1e-5)`,
+  `inv = float(1.0/double(denom))`, `lut[i] = expf(-(float)(i*i) · inv)`.
+  SIMD rcp/Newton path skipped (~1 ulp).
+- Noise layer luma (type 3): premultiplied `R·A·0.299 + G·A·0.587 + B·A·0.114`
+  (channel premul in float, weighted sum in double), aligned by world origins.
+- **Deviations**: serial loops (original chunks are serial too), std::vector
+  instead of PF handles, negative noise-table wrap, scalar LUT path.
+- Test: `OLMRadialBlur/test_radial_blur.cpp` (fake host, real EffectMain;
+  31-param setup check, default pass-through, Zoom/Rotation deltas, repeat
+  border, 8/16/32 bpc). MinGW command mirrors the DirectionalBlur one (no
+  iterate suites needed; links Smart_Utils/AEGP_SuiteHandler/MissingSuiteError).
 
 ## Known deliberate deviations from the binary
 
