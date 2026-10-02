@@ -261,14 +261,23 @@ PF_Err SetStreamHidden(AEGP_SuiteHandler &suites, AEGP_EffectRefH effectH,
 }
 
 PF_Err SetParamDisabled(AEFX_SuiteScoper<PF_ParamUtilsSuite3> &suite,
-                        PF_InData *in_data, PF_ParamIndex position, PF_Boolean disabled) {
-    PF_ParamDef def;
-    AEFX_CLR_STRUCT(def);
-    def.ui_flags = disabled ? PF_PUI_DISABLED : PF_PUI_NONE;
+                        PF_InData *in_data, PF_ParamIndex position,
+                        const PF_ParamDef *current, PF_Boolean disabled) {
+    if (!in_data || !current) return PF_Err_BAD_CALLBACK_PARAM;
+    PF_ParamDef def = *current;
+    if (disabled) def.ui_flags |= PF_PUI_DISABLED;
+    else def.ui_flags &= ~PF_PUI_DISABLED;
     return suite->PF_UpdateParamUI(in_data->effect_ref, position, &def);
 }
 
-PF_Err UpdateParamsUI(PF_InData *in_data, PF_OutData *out_data) {
+PF_Err UpdateParamsUI(PF_InData *in_data, PF_OutData *out_data, PF_ParamDef *params[]) {
+    if (!in_data || !out_data || !params) return PF_Err_BAD_CALLBACK_PARAM;
+    const PF_ParamIndex ui_positions[] = {
+        OLMRB_OUTER_STRENGTH, OLMRB_OUTER_OFFSET_MODE, OLMRB_OUTER_OFFSET,
+        OLMRB_INNER_STRENGTH, OLMRB_INNER_OFFSET_MODE, OLMRB_INNER_OFFSET
+    };
+    for (const PF_ParamIndex position : ui_positions)
+        if (!params[position]) return PF_Err_BAD_CALLBACK_PARAM;
     if (!in_data->pica_basicP || !g_aegp_id) return PF_Err_NONE;
     PF_Err err = PF_Err_NONE;
     A_long blur_type = OLMRB_BLUR_ZOOM;
@@ -292,18 +301,24 @@ PF_Err UpdateParamsUI(PF_InData *in_data, PF_OutData *out_data) {
         in_data, kPFParamUtilsSuite, kPFParamUtilsSuiteVersion3, out_data);
     const PF_Boolean rotation = blur_type == OLMRB_BLUR_ROTATION;
     err = SetParamDisabled(param_utils, in_data, OLMRB_OUTER_STRENGTH,
+                           params[OLMRB_OUTER_STRENGTH],
                            rotation && outer_mode == OLMRB_OFFSET_OVERRIDE);
     if (err) return err;
-    err = SetParamDisabled(param_utils, in_data, OLMRB_OUTER_OFFSET_MODE, !rotation);
+    err = SetParamDisabled(param_utils, in_data, OLMRB_OUTER_OFFSET_MODE,
+                           params[OLMRB_OUTER_OFFSET_MODE], !rotation);
     if (err) return err;
-    err = SetParamDisabled(param_utils, in_data, OLMRB_OUTER_OFFSET, !rotation);
+    err = SetParamDisabled(param_utils, in_data, OLMRB_OUTER_OFFSET,
+                           params[OLMRB_OUTER_OFFSET], !rotation);
     if (err) return err;
     err = SetParamDisabled(param_utils, in_data, OLMRB_INNER_STRENGTH,
+                           params[OLMRB_INNER_STRENGTH],
                            rotation && inner_mode == OLMRB_OFFSET_OVERRIDE);
     if (err) return err;
-    err = SetParamDisabled(param_utils, in_data, OLMRB_INNER_OFFSET_MODE, !rotation);
+    err = SetParamDisabled(param_utils, in_data, OLMRB_INNER_OFFSET_MODE,
+                           params[OLMRB_INNER_OFFSET_MODE], !rotation);
     if (err) return err;
-    err = SetParamDisabled(param_utils, in_data, OLMRB_INNER_OFFSET, !rotation);
+    err = SetParamDisabled(param_utils, in_data, OLMRB_INNER_OFFSET,
+                           params[OLMRB_INNER_OFFSET], !rotation);
     if (err) return err;
 
     AEGP_SuiteHandler suites(in_data->pica_basicP);
@@ -1225,7 +1240,6 @@ PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data, PF_SmartRenderExtra
 
 PF_Err EffectMain(PF_Cmd cmd, PF_InData *in_data, PF_OutData *out_data,
                   PF_ParamDef *params[], PF_LayerDef *output, void *extra) {
-    (void)params;
     (void)output;
     try {
         switch (cmd) {
@@ -1236,7 +1250,7 @@ PF_Err EffectMain(PF_Cmd cmd, PF_InData *in_data, PF_OutData *out_data,
         case PF_Cmd_PARAMS_SETUP:
             return ParamsSetup(in_data, out_data);
         case PF_Cmd_UPDATE_PARAMS_UI:
-            return UpdateParamsUI(in_data, out_data);
+            return UpdateParamsUI(in_data, out_data, params);
         case PF_Cmd_SMART_PRE_RENDER:
             return PreRender(in_data, (PF_PreRenderExtra *)extra);
         case PF_Cmd_SMART_RENDER:

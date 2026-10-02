@@ -253,7 +253,8 @@ Decompiled from `.opencode/olm-opentools-windows/OLMRadialBlur/OLMRadialBlur.aex
 - **Deviations**: serial loops (original chunks are serial too), std::vector
   instead of PF handles, negative noise-table wrap, scalar LUT path.
 - Test: `OLMRadialBlur/test_radial_blur.cpp` (fake host, real EffectMain;
-  31-param setup check, default pass-through, Zoom/Rotation deltas, repeat
+  31-param setup check, UPDATE_PARAMS_UI callback checks for all six controls
+  enabled and disabled, default pass-through, Zoom/Rotation deltas, repeat
   border, 8/16/32 bpc). MinGW command mirrors the DirectionalBlur one (no
   iterate suites needed; links Smart_Utils/AEGP_SuiteHandler/MissingSuiteError).
 
@@ -272,6 +273,13 @@ Decompiled from `.opencode/olm-opentools-windows/OLMRadialBlur/OLMRadialBlur.aex
   `Contents/Resources/<name>.rsrc` (see packaging section), not in the executable.
 - Disappearing layer with default parameters → the kernels' first action is
   `utils->copy(input, output)`; without it the all-zero early-out left the output unwritten.
+- **AE `PF_UpdateParamUI` wrong ParamDef type** → `SetParamDisabled()` zero-initialized a
+  `PF_ParamDef` and set only `ui_flags`, leaving the type `PF_Param_LAYER` (0)
+  instead of the current slider or popup definition. AE's suite accepts only cosmetic fields
+  from a valid current definition. It now copies the corresponding `params[]` entry and changes
+  only `PF_PUI_DISABLED`; the regression test exercises all six targets enabled and disabled
+  through a fake `PF_ParamUtilsSuite3` callback, checking type, name, slider/popup ranges and
+  choices, parameter/UI flags, and that the host's original definitions remain unchanged.
 - **"Alpha Fade fades the whole image uniformly"** → in `size_pass()` the neighbour alpha reads
   mixed a *pixel* index (`c.pix(x, y)`) with *float* offsets (`k * 4u`), so the fade window
   sampled wrong pixels (≈1/4 of the intended position, often transparent canvas), collapsing

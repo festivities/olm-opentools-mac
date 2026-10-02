@@ -17,6 +17,7 @@ constexpr float kCenter = 16.5f;
 
 struct TestHost {
     PF_PointParamSuite1 point_suite{};
+    PF_ParamUtilsSuite3 param_utils_suite{};
     SPBasicSuite basic{};
     PF_UtilCallbacks utils{};
     PF_InData in{};
@@ -39,6 +40,11 @@ struct TestHost {
     unsigned layer_checkins = 0;
     unsigned output_checkouts = 0;
     unsigned pre_render_checkouts = 0;
+    PF_ParamIndex expected_ui_position = PF_ParamIndex_NONE;
+    PF_ParamDef expected_ui_def{};
+    PF_ParamUIFlags expected_ui_flags = PF_PUI_NONE;
+    unsigned ui_callback_count = 0;
+    bool ui_callback_valid = true;
     float point_x = kCenter;
     float point_y = kCenter;
     int bitdepth = 8;
@@ -47,6 +53,33 @@ struct TestHost {
 };
 
 TestHost *g_host = nullptr;
+
+bool same_ui_target_fields(const PF_ParamDef &actual, const PF_ParamDef &expected) {
+    if (actual.uu.id != expected.uu.id || actual.ui_width != expected.ui_width ||
+        actual.ui_height != expected.ui_height || actual.param_type != expected.param_type ||
+        std::strcmp(actual.PF_DEF_NAME, expected.PF_DEF_NAME) ||
+        actual.flags != expected.flags || actual.unused != expected.unused)
+        return false;
+
+    switch (expected.param_type) {
+    case PF_Param_SLIDER:
+        return actual.u.sd.value == expected.u.sd.value &&
+               !std::strcmp(actual.u.sd.value_str, expected.u.sd.value_str) &&
+               !std::strcmp(actual.u.sd.value_desc, expected.u.sd.value_desc) &&
+               actual.u.sd.valid_min == expected.u.sd.valid_min &&
+               actual.u.sd.valid_max == expected.u.sd.valid_max &&
+               actual.u.sd.slider_min == expected.u.sd.slider_min &&
+               actual.u.sd.slider_max == expected.u.sd.slider_max &&
+               actual.u.sd.dephault == expected.u.sd.dephault;
+    case PF_Param_POPUP:
+        return actual.u.pd.value == expected.u.pd.value &&
+               actual.u.pd.num_choices == expected.u.pd.num_choices &&
+               actual.u.pd.dephault == expected.u.pd.dephault &&
+               actual.u.pd.u.PF_DEF_NAMESPTR == expected.u.pd.u.PF_DEF_NAMESPTR;
+    default:
+        return false;
+    }
+}
 
 int position_for_id(A_long id) {
     if (!g_host) return -1;
@@ -130,10 +163,27 @@ PF_Err get_point(PF_ProgPtr, const PF_ParamDef *, A_FloatPoint *point) {
     return PF_Err_NONE;
 }
 
+PF_Err SPAPI update_param_ui(PF_ProgPtr effect_ref, PF_ParamIndex position,
+                             const PF_ParamDef *def) {
+    if (!g_host || effect_ref != g_host->in.effect_ref || !def ||
+        position != g_host->expected_ui_position)
+        return PF_Err_BAD_CALLBACK_PARAM;
+    ++g_host->ui_callback_count;
+    if (def->ui_flags != g_host->expected_ui_flags ||
+        !same_ui_target_fields(*def, g_host->expected_ui_def)) {
+        g_host->ui_callback_valid = false;
+        return PF_Err_BAD_CALLBACK_PARAM;
+    }
+    return PF_Err_NONE;
+}
+
 PF_Err SPAPI acquire_suite(const char *name, int32 version, const void **suite) {
     if (!g_host || !name || !suite) return (SPErr)-1;
     if (!std::strcmp(name, kPFPointParamSuite) && version == kPFPointParamSuiteVersion1)
         *suite = &g_host->point_suite;
+    else if (!std::strcmp(name, kPFParamUtilsSuite) &&
+             version == kPFParamUtilsSuiteVersion3)
+        *suite = &g_host->param_utils_suite;
     else
         return (SPErr)-1;
     return kSPNoError;
@@ -201,6 +251,7 @@ bool initialize_host(TestHost &host, int bitdepth) {
     g_host = &host;
     host.bitdepth = bitdepth;
     host.point_suite.PF_GetFloatingPointValueFromPointDef = get_point;
+    host.param_utils_suite.PF_UpdateParamUI = update_param_ui;
     host.basic.AcquireSuite = acquire_suite;
     host.basic.ReleaseSuite = release_suite;
     host.utils.copy = copy_world;
@@ -309,6 +360,75 @@ bool verify_params(const TestHost &host) {
            last.param_type == PF_Param_GROUP_END;
 }
 
+bool verify_param_ui_updates() {
+    TestHost host;
+    if (!initialize_host(host, 8) || !verify_params(host)) {
+        std::fprintf(stderr, "UPDATE_PARAMS_UI test host setup failed\n");
+        g_host = nullptr;
+        return false;
+    }
+
+    const PF_ParamIndex positions[] = {
+        OLMRB_OUTER_STRENGTH, OLMRB_OUTER_OFFSET_MODE, OLMRB_OUTER_OFFSET,
+        OLMRB_INNER_STRENGTH, OLMRB_INNER_OFFSET_MODE, OLMRB_INNER_OFFSET
+    };
+    std::array<PF_ParamDef *, OLMRB_NUM_PARAMS> ui_params{};
+    for (int i = 0; i < OLMRB_NUM_PARAMS; ++i) ui_params[(size_t)i] = &host.params[(size_t)i];
+    for (const PF_ParamIndex position : positions)
+        host.params[position].ui_flags = PF_PUI_ECW_SEPARATOR;
+
+    if (EffectMain(PF_Cmd_UPDATE_PARAMS_UI, &host.in, &host.out, nullptr,
+                   nullptr, nullptr) != PF_Err_BAD_CALLBACK_PARAM) {
+        std::fprintf(stderr, "UPDATE_PARAMS_UI accepted a null params array\n");
+        g_host = nullptr;
+        return false;
+    }
+    ui_params[OLMRB_INNER_OFFSET_MODE] = nullptr;
+    if (EffectMain(PF_Cmd_UPDATE_PARAMS_UI, &host.in, &host.out, ui_params.data(),
+                   nullptr, nullptr) != PF_Err_BAD_CALLBACK_PARAM) {
+        std::fprintf(stderr, "UPDATE_PARAMS_UI accepted a null target definition\n");
+        g_host = nullptr;
+        return false;
+    }
+    ui_params[OLMRB_INNER_OFFSET_MODE] = &host.params[OLMRB_INNER_OFFSET_MODE];
+
+    AEFX_SuiteScoper<PF_ParamUtilsSuite3> suite(
+        &host.in, kPFParamUtilsSuite, kPFParamUtilsSuiteVersion3, &host.out);
+    for (const PF_ParamIndex position : positions) {
+        host.expected_ui_position = position;
+        const PF_ParamUIFlags host_flags = host.params[position].ui_flags;
+        for (PF_Boolean disabled : {TRUE, FALSE}) {
+            PF_ParamDef current = host.params[position];
+            if (!disabled) current.ui_flags |= PF_PUI_DISABLED;
+            host.expected_ui_def = current;
+            const PF_ParamUIFlags source_flags = current.ui_flags;
+            host.expected_ui_flags = source_flags;
+            if (disabled) host.expected_ui_flags |= PF_PUI_DISABLED;
+            else host.expected_ui_flags &= ~PF_PUI_DISABLED;
+            host.ui_callback_count = 0;
+            host.ui_callback_valid = true;
+
+            const PF_Err err = SetParamDisabled(
+                suite, &host.in, position, &current, disabled);
+            if (err || !host.ui_callback_valid || host.ui_callback_count != 1 ||
+                !same_ui_target_fields(current, host.expected_ui_def) ||
+                current.ui_flags != source_flags ||
+                !same_ui_target_fields(host.params[position], host.expected_ui_def) ||
+                host.params[position].ui_flags != host_flags) {
+                std::fprintf(stderr,
+                             "UPDATE_PARAMS_UI changed or corrupted param %d (%s)\n",
+                             (int)position, disabled ? "disabled" : "enabled");
+                g_host = nullptr;
+                return false;
+            }
+        }
+    }
+
+    g_host = nullptr;
+    std::puts("UPDATE_PARAMS_UI: six controls enabled/disabled with definitions preserved");
+    return true;
+}
+
 struct RenderResult {
     std::vector<unsigned char> input;
     std::vector<unsigned char> output;
@@ -376,6 +496,8 @@ size_t changed_pixels(const RenderResult &a, const RenderResult &b, int bitdepth
 }
 
 bool run_all() {
+    if (!verify_param_ui_updates()) return false;
+
     for (int bitdepth : {8, 16, 32}) {
         RenderResult baseline, zoom;
         if (!render(bitdepth, 0, true, &baseline) || !render(bitdepth, 1, true, &zoom)) {
