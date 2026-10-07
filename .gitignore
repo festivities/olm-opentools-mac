@@ -1,2 +1,6 @@
 .i64
 2026-10-07-192739-local-command-caveatthe-command-below-was-run-d.txt
+
+# build-all.sh output
+/build-*/
+/dist/

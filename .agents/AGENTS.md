@@ -1,30 +1,38 @@
 # AGENTS.md — olm-opentools-mac
 
-Port of OLM OpenTools (Windows-only AE plug-ins for anime compositing) to macOS.
-Plug-ins: **OLM Directional Blur**, **OLM RadialBlur** and **OLM Color Key** (working
-in user Mac AE testing), **OLM Color Keep** (source verified; user Mac AE testing
-in progress). This file is the complete handoff context (a new session needs
-nothing else).
+Port of OLM OpenTools (Windows-only After Effects plug-ins for anime compositing)
+to macOS, targeting AE 2026 / SDK 26.5 at ~99% visual parity (bit-exact is
+deferred). All **9** plug-ins are ported and pass their MinGW fake-host tests on
+Windows. **What is left is: compile on macOS (`./build-all.sh`) and smoke-test
+each in After Effects** — see "Next steps" at the bottom.
 
-## Status (2026-10-07)
+This file is the complete handoff context; a new session needs nothing else. The
+per-plug-in sections below are verified reference (identity/PiPL, params, render
+math, quirks) — consult the one for the plug-in you are working on. Trust the
+decompile over prose; every load-bearing fact was re-verified in IDA.
 
-| Item | State |
-|---|---|
-| Windows `OLMDirectionalBlur.aex` (1.1.1, x64) | Render and Alpha Fade paths examined with idalib; original reference is read-only |
-| `OLMDirectionalBlur/` macOS source | Builds, loads, and renders in AE 2026 on Mac; user confirms Alpha Fade works after clearing AE's cached plug-in |
-| MT19937 (noise RNG) | Verified against mt19937 reference vectors |
-| Alpha Fade in AE | **Resolved in user testing**: patched plug-in was cached; clearing AE's cache refreshed it and Alpha Fade works |
-| Windows `OLMRadialBlur.aex` (1.3.0, x64) | Decompiled by two subagents; all load-bearing facts re-verified in IDA by the main agent |
-| `OLMRadialBlur/` macOS source | Builds and works in user Mac AE testing after `d2355dd` fixed PF_UpdateParamUI definitions |
-| `OLMColorKey/` macOS source | Decompiled via general agents, main-agent IDA verification/review; MinGW production-path test passes 1,052 checks; user confirmed it works in Mac AE |
-| `OLMBlur/` macOS source | Ported 2026-10-07 from `OLMBlur.aex` 1.2.1 (main agent, IDA-verified); MinGW production-path test passes 201 checks (incl. an independent brute-force reference); Mac build/AE testing pending |
-| `OLMDistanceGradation/` macOS source | Ported 2026-10-07 from `DistanceGradation.aex` 0.8.2α (main agent, IDA-verified; OpenCV calls reimplemented); MinGW test passes 104 checks; Mac build/AE testing pending |
-| `OLMSmoother2AE/` macOS source | Ported 2026-10-07 from `OLMSmoother2.aex` 2.1.0 (delegated decompile, main-agent IDA spot-check, delegated implementation); MinGW test 992 checks; Mac build/AE testing pending |
-| `OLMToonDilate/` macOS source | Ported 2026-10-07 from `OLMToonDilate.aex` 1.1.1 (delegated decompile, main-agent IDA verification of PiPL bytes and both flood passes); MinGW test 44 checks; Mac build/AE testing pending |
-| `OLMKiraKira/` macOS source | Ported 2026-10-07 from `OLMKiraKira.aex` 3.3 (delegated decompile, main-agent IDA verification of PiPL, PreRender, exponential-IIR in-place backward pass, merge early-out); OpenCV boxFilter/GaussianBlur/warpAffine/resize/mixChannels reimplemented; MinGW test 61 checks; Mac build/AE testing pending. Ramp editor custom-UI drawing NOT ported (ramp stored/evaluated/flattened, Use Ramp greys color via UPDATE_PARAMS_UI) |
-| Port queue (user order) | OLMBlur (done) → OLMDistanceGradation (done) → OLMSmoother2AE (done) → OLMToonDilate (done) → OLMKiraKira (done); references in `.opencode/olm-opentools-windows/<Name>/` |
-| `OLMColorKeep/` macOS source | Ported 2026-10-07 from `ColorKeep.aex` 1.0.1 (main agent, IDA-verified); MinGW production-path test passes 88 checks; user Mac AE testing in progress |
-| Windows-versus-Mac pixel comparison | Deferred by user ("99% of the look" is the bar) |
+## Status (2026-10-08)
+
+**All 9 plug-ins are ported and MinGW-tested on Windows. Remaining work = Mac
+compile + AE smoke test (see "Next steps").** User is testing one plug-in at a
+time; build with `./build-all.sh` (below).
+
+| Plug-in (dir) | Windows source | Port state |
+|---|---|---|
+| OLMDirectionalBlur | `OLMDirectionalBlur.aex` 1.1.1 | ✅ **Confirmed in user Mac AE** (Alpha Fade works after clearing AE's cache) |
+| OLMRadialBlur | `OLMRadialBlur.aex` 1.3.0 | ✅ **Confirmed in user Mac AE** (after `d2355dd` PF_UpdateParamUI fix) |
+| OLMColorKey | `OLMColorKey.aex` 2.3.1 | ✅ **Confirmed in user Mac AE**; MinGW 1,052 checks |
+| OLMColorKeep | `ColorKeep.aex` 1.0.1 (no OLM prefix) | Source verified; MinGW 88 checks; **user Mac AE testing in progress** |
+| OLMBlur | `OLMBlur.aex` 1.2.1 | MinGW 201 checks (incl. brute-force ref); **Mac build/AE pending** |
+| OLMDistanceGradation | `DistanceGradation.aex` 0.8.2α | MinGW 104 checks; OpenCV reimplemented; **Mac build/AE pending** |
+| OLMSmoother2AE | `OLMSmoother2.aex` 2.1.0 | MinGW 992 checks; **Mac build/AE pending** |
+| OLMToonDilate | `OLMToonDilate.aex` 1.1.1 | MinGW 44 checks; **Mac build/AE pending** |
+| OLMKiraKira | `OLMKiraKira.aex` 3.3 | MinGW 61 checks; OpenCV reimplemented; ramp *editor* UI not ported; **Mac build/AE pending** |
+
+Port queue (user order, all done): OLMBlur → OLMDistanceGradation → OLMSmoother2AE
+→ OLMToonDilate → OLMKiraKira. Read-only references in
+`.opencode/olm-opentools-windows/<Name>/`. Windows-vs-Mac pixel comparison is
+deferred by user ("99% of the look" is the bar).
 
 **Warning to future agents:** the first pass of this port (commit `8cf0800`) contained a
 plausible-looking but *invented* render core (MSVC `rand`, rotate/`0.5+0.5*noise` weights,
@@ -32,7 +40,24 @@ sum-normalized taps). It was replaced in this pass. Trust the decompile, not the
 
 ## Build
 
-Out-of-source only (CMakeLists refuses in-source):
+**One-click (macOS):** `./build-all.sh` at the repo root builds all 9 plug-ins
+into `./dist` as signed `.plugin` bundles ( Rez PiPL + `xattr -cr` + ad-hoc
+codesign happen in each CMakeLists post-build). It auto-detects the bundled SDK
+under `.opencode/AfterEffectsSDK_*_MacOS/*/Examples`. Needs full Xcode + cmake.
+
+```sh
+./build-all.sh                     # all -> ./dist
+OUT=~/Desktop/OLM ./build-all.sh   # choose output folder
+AE_SDK=/path/SDK/Examples ./build-all.sh
+./build-all.sh --clean             # wipe build dirs, full reconfigure
+./build-all.sh OLMBlur OLMKiraKira # only named plug-ins
+```
+
+`build-*/` and `dist/` are git-ignored. The script is bash-3.2-safe (no arrays /
+`set -u`) and committed with mode 100755 + `.gitattributes` `*.sh eol=lf`.
+
+**Per-plug-in (manual).** Out-of-source only (CMakeLists refuses in-source), and
+use a distinct build dir per plug-in to avoid a CMake source-cache mismatch:
 
 ```
 cmake -S OLMDirectionalBlur -B build \
@@ -41,7 +66,6 @@ cmake -S OLMDirectionalBlur -B build \
 cmake --build build
 ```
 
-Use a distinct build directory for each plug-in to avoid a CMake source-cache mismatch.
 ColorKey, from the repository root on the Mac:
 
 ```sh
@@ -433,8 +457,13 @@ the Mac bundle in AE and reports it working.
 - `OLMColorKeep/` — same six-file layout; `test_color_keep.cpp`.
 - `OLMBlur/` — same six-file layout; `test_blur.cpp`.
 - `OLMDistanceGradation/` — same six-file layout; `test_distance_gradation.cpp`.
+- `OLMSmoother2AE/` — same six-file layout; `test_smoother2.cpp`.
+- `OLMToonDilate/` — same six-file layout; `test_toon_dilate.cpp`.
+- `OLMKiraKira/` — same six-file layout; `test_kira_kira.cpp`.
+- `build-all.sh` — one-click macOS build of all 9 into `./dist` (see "Build").
+- `.gitattributes` — forces `*.sh` to LF so `build-all.sh` runs after a Mac clone.
 
-## Porting workflow (proven on four plug-ins — follow it for the next one)
+## Porting workflow (proven across all 9 ports — reuse for any AE-smoke-test bug or future plug-in)
 
 1. **Decompile by delegation**: copy the reference `.aex` to
    `%TEMP%\opencode\<Name>-analysis.aex` and open THAT with `ida-mcp`
@@ -784,19 +813,43 @@ backward pass, and the merge early-out in IDA (instance `7e249916d6bc`).
 
 ## Next steps
 
-1. Port queue is complete (all 5 remaining plug-ins ported + MinGW-tested).
-   Remaining work is Mac build + AE smoke testing, one plug-in at a time per
-   the user's plan. For each: `cmake -S <Dir> -B build-<name>` with the Mac
-   SDK + `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`, install, **clear AE's
-   plug-in cache**, relaunch.
-2. Mac build + AE smoke test of OLMSmoother2 (`cmake -S OLMSmoother2AE -B build-smoother2` with the usual SDK/arch flags; clear AE's cache). Expect: default v2 smooths edges; Smoothness 0 is a near pass-through (v2 still round-trips sRGB); Enable Color Key punches the picked color to transparent. Also smoke-test OLMBlur (Legacy off: blur stays inside
-   opaque regions; Legacy checkbox on: older look) and OLMDistanceGradation
-   (note In/Out ships with value 0 — pick Inside/Outside/Both to see output).
-3. Finish user Mac AE testing of ColorKeep (build: ColorKey recipe with
-   `-S OLMColorKeep -B build-colorkeep`; clear AE's cache after installing).
-   Expect: count slider hides/shows pickers, picked opaque colors stay,
-   everything else goes transparent (RGB kept), at 8/16/32 bpc.
-4. Windows/Mac pixel comparisons are deferred by user; visually close output is
-   the current goal, not a measured claim of bit-exact parity.
-5. If the noise field index safety wrap matters for parity, match the original OOB behaviour
-   behind a flag once the exact table-adjacent bytes in the original buffer are known.
+**The port is done. All that is left is: compile on macOS, then smoke-test each
+plug-in in After Effects.** No more decompiling or implementation is expected
+unless a smoke test turns up a bug.
+
+1. **Compile (Mac).** `./build-all.sh` → signed `.plugin` bundles in `./dist`
+   (see "Build"). If one fails, build it alone for a clean log:
+   `cmake -S <Dir> -B build-<name> -DAE_SDK=<…MacOS…/Examples>
+   -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release &&
+   cmake --build build-<name>`. AppleClang is stricter than MinGW — expect the
+   occasional new warning-as-error; fix in the plug-in source, keep the math
+   identical to the verified section below.
+
+2. **Install + smoke-test in AE, one at a time.** Copy the `.plugin` from `dist`
+   into AE's Plug-ins folder, **clear AE's plug-in cache** (Preferences, or
+   delete the cache dir), relaunch. A stale cache is the #1 cause of "the effect
+   did nothing" — always rule it out first. The effect appears under
+   `OLM Plug-ins`. Per-plug-in expectations:
+   - **OLMColorKeep** (user testing in progress): count slider shows/hides the
+     pickers; picked opaque colors stay, everything else goes transparent (RGB
+     kept); 8/16/32 bpc.
+   - **OLMBlur**: Legacy off → blur stays inside opaque regions; Legacy on →
+     older look.
+   - **OLMDistanceGradation**: In/Out popup ships at value 0 — pick
+     Inside/Outside/Both or you get no output.
+   - **OLMSmoother2AE**: default v2 smooths edges; Smoothness 0 ≈ pass-through
+     (v2 still round-trips sRGB); Enable Color Key punches the picked color to
+     transparent.
+   - **OLMToonDilate**: grows fully-opaque edges outward by Search Radius using
+     nearest-opaque color (Chebyshev); Search Radius 0 = pass-through.
+   - **OLMKiraKira**: 4-armed sparkle + highlight glow on bright/opaque areas;
+     Use Ramp greys the flat Color picker. The ramp *editor* widget is not
+     ported, so stops can't be redrawn in-UI on Mac (ramps from Win projects
+     still render). Add the PF_Cmd_EVENT draw handler if in-UI editing is wanted.
+
+3. Windows/Mac pixel comparisons are deferred by user; visually close output is
+   the goal, not a measured bit-exact parity claim.
+
+4. If the noise field index safety wrap matters for parity, match the original
+   OOB behaviour behind a flag once the exact table-adjacent bytes in the
+   original buffer are known.
