@@ -3,6 +3,8 @@
 Port of OLM OpenTools (Windows-only AE plug-ins for anime compositing) to macOS.
 Plug-ins: **OLM Directional Blur** and **OLM RadialBlur** (working in user Mac AE
 testing), **OLM Color Key** (source verified; Mac build/host testing pending).
+**Next target: OLM ColorKeep** — see "Next plug-in: OLMColorKeep" below; this file is
+the complete handoff context (a new session needs nothing else).
 
 ## Status (2026-10-05)
 
@@ -15,6 +17,7 @@ testing), **OLM Color Key** (source verified; Mac build/host testing pending).
 | Windows `OLMRadialBlur.aex` (1.3.0, x64) | Decompiled by two subagents; all load-bearing facts re-verified in IDA by the main agent |
 | `OLMRadialBlur/` macOS source | Builds and works in user Mac AE testing after `d2355dd` fixed PF_UpdateParamUI definitions |
 | `OLMColorKey/` macOS source | Decompiled via general agents, main-agent IDA verification/review; MinGW production-path test passes 1,052 checks; Mac build/AE testing pending |
+| `OLMColorKeep` | **Next port target.** Reference: `.opencode/olm-opentools-windows/OLMColorKeep/ColorKeep.aex` (note: filename has NO `OLM` prefix) + user manual PDF in the same dir. Not yet decompiled. |
 | Windows-versus-Mac pixel comparison | Deferred by user ("99% of the look" is the bar) |
 
 **Warning to future agents:** the first pass of this port (commit `8cf0800`) contained a
@@ -417,25 +420,89 @@ actual AE host behavior remain unverified until the user tests the bundle.
 - `OLMDirectionalBlur/OLMDirectionalBlurPiPL.r` — Mac PiPL (Intel + ARM), identity above.
 - `OLMDirectionalBlur/Mac/OLMDirectionalBlur.plugin-Info.plist` — `eFKT`/`FXTC` bundle.
 - `OLMDirectionalBlur/CMakeLists.txt` — universal build + Rez step.
+- `OLMRadialBlur/` — same six-file layout; `test_radial_blur.cpp` is its
+  production-path test.
 - `OLMColorKey/` — effect header/source, PiPL, Mac plist, CMake and
   `test_color_key.cpp`; see the ColorKey section above for evidence and checks.
+
+## Porting workflow (proven on three plug-ins — follow it for the next one)
+
+1. **Decompile by delegation**: copy the reference `.aex` to
+   `%TEMP%\opencode\<Name>-analysis.aex` and open THAT with `ida-mcp`
+   (`open_database`); never let IDA touch the read-only reference dir. Launch
+   two parallel `general` subagents: one for scaffolding (entry dispatch, PiPL
+   resource bytes, full PARAMS_SETUP table with index-vs-uu.id, UI logic), one
+   for the render pipeline (kernels, param checkout scratch layout, math).
+   Forbid both from renaming/annotating/saving the IDB or editing the workspace.
+2. **Main agent verifies** every load-bearing claim in IDA before planning:
+   PiPL bytes, dispatch table, checkout function + transitive value-extraction
+   helpers (subagents twice missed conversions inside helpers — e.g. fixed-angle
+   → radians), constants, and direction/LUT assignments. Subagent reports have
+   contained real errors each time; treat them as leads, not truth.
+3. **Main agent writes the plan** into one implementation subagent prompt:
+   verified facts inline (addresses, offsets, formulas), deliverables
+   (`<Name>.h/.cpp`, `<Name>PiPL.r`, `Mac/*.plugin-Info.plist`, `CMakeLists.txt`,
+   `test_*.cpp`), and the requirement to consult the IDB for anything unclear.
+4. **Main agent verifies the implementation**: read the code against the binary
+   (spot-check the risky math), run the MinGW syntax check AND compile+run the
+   production-path test independently, fix found bugs (directly or via the same
+   subagent session), then update this file.
+5. **Commit+push by delegation** (user's standing preference): stage only the
+   plug-in dir + `.agents/AGENTS.md`; never `.opencode/`.
+
+Test/build recipes (Windows host, MinGW + the Win 26.5 SDK — cmd expands `%VAR%`
+at parse time, so use literal paths in one-liners):
+
+```cmd
+g++ -std=c++17 -D_WIN32 -D_WINDOWS -Wno-multichar -Wno-unknown-pragmas -Wno-missing-field-initializers -ffunction-sections -fdata-sections -I "D:\Dev\projects\olm-opentools-mac\.opencode\AfterEffectsSDK_26.5_win\Examples\Headers" -I "D:\Dev\projects\olm-opentools-mac\.opencode\AfterEffectsSDK_26.5_win\Examples\Headers\SP" -I "D:\Dev\projects\olm-opentools-mac\.opencode\AfterEffectsSDK_26.5_win\Examples\Util" -I "D:\Dev\projects\olm-opentools-mac\.opencode\AfterEffectsSDK_26.5_win\Examples\Resources" test_<name>.cpp "<SDK>\Util\AEGP_SuiteHandler.cpp" "<SDK>\Util\MissingSuiteError.cpp" "<SDK>\Util\Smart_Utils.cpp" -Wl,--gc-sections -o "%TEMP%\<name>-test.exe" && "%TEMP%\<name>-test.exe"
+```
+
+(Add `-fsyntax-only` + the plug-in `.cpp` alone for the quick syntax check. The
+test `#include`s the plug-in `.cpp` and fakes the AE host while running the real
+`EffectMain` — see `OLMColorKey/test_color_key.cpp` for the most complete fake
+host: iterate suites, world suite, color/point param suites, AEGP suites, and
+UI/error-injection scenarios.)
+
+User ground rules (standing): delegate decompilation/implementation/commits to
+`general` subagents but verify as main agent; no `.ps1` execution and no pip
+installs without explicit permission; `.opencode/` is read-only reference.
 
 ## Conventions for agents
 
 - Binary wins over prose and over the user manual. Re-verify every claim against the `.aex`
-  (idalib DB path: `.opencode/olm-opentools-windows/OLMDirectionalBlur/OLMDirectionalBlur.aex.i64`).
+  via `ida-mcp` on a TEMP copy (references stay untouched; earlier sessions left
+  `.aex.i64` DBs next to the originals — reusable but do not modify the tracked files).
 - Keep `PF_Pixel` channel order in mind: PF pixels are A,R,G,B; the effect's internal canvas is
   R,G,B,A.
 - No Windows-isms (`strncpy_s`, VCOMP, `entryPointFunc`); use `PF_STRNNCPY`, `EffectMain`,
   `AEGP_SuiteHandler(in_data->pica_basicP)` (Mac takes `const SPBasicSuite*`, not in/out data).
 - Reference-only dirs (do not edit): `.opencode/AfterEffectsSDK_*`, `.opencode/olm-opentools-windows/`.
 
+## Next plug-in: OLMColorKeep
+
+- Reference: `.opencode/olm-opentools-windows/OLMColorKeep/ColorKeep.aex`
+  (NO `OLM` prefix in the filename) + `ColorKeepUserManualEN.pdf`.
+- It is the sibling of OLMColorKey (same vendor framework: expect the same
+  `MyEffect` C++ scaffolding, `entry_point` export, PiPL in the PE `.rsrc`,
+  5-arg `utils->copy` first in kernels, SmartRender-only, AEGP-registered UI
+  logic). The ColorKey decompile notes above map the framework; the color-space
+  conversions (HSV/Lab/YUV/YCrCb helpers) are very likely shared code — diff
+  against ColorKey's verified constants before re-deriving.
+- Follow the "Porting workflow" section. Deliverables land in a new
+  `OLMColorKeep/` directory mirroring `OLMColorKey/` (six files).
+- Watch for the ColorKey-class gotchas: index-vs-uu.id param tables, transitive
+  conversions inside checkout helpers, `PF_UpdateParamUI` needing a copy of the
+  real host `PF_ParamDef`, pre-render rect unions, and quirks that must be
+  reproduced (one-sided hue wrap, ignored channels, in-place Lab shifts).
+
 ## Next steps
 
-1. Build ColorKey on the Mac (commands above), install the `.plugin`, clear AE's
+1. Port OLMColorKeep per the section above (decompile → verify → plan →
+   implement → verify → commit+push, all via the delegation workflow).
+2. Build ColorKey on the Mac (commands above), install the `.plugin`, clear AE's
    cache/relaunch and smoke-test key/keep, colors/threshold modes, replacement,
    UI visibility and Thin/Blur in 8/16/32-bpc projects. RadialBlur now works in user testing.
-2. Windows/Mac pixel comparisons are deferred by user; visually close output is
+3. Windows/Mac pixel comparisons are deferred by user; visually close output is
    the current goal, not a measured claim of bit-exact parity.
-3. If the noise field index safety wrap matters for parity, match the original OOB behaviour
-  behind a flag once the exact table-adjacent bytes in the original buffer are known.
+4. If the noise field index safety wrap matters for parity, match the original OOB behaviour
+   behind a flag once the exact table-adjacent bytes in the original buffer are known.
