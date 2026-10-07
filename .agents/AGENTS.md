@@ -18,7 +18,8 @@ nothing else).
 | `OLMRadialBlur/` macOS source | Builds and works in user Mac AE testing after `d2355dd` fixed PF_UpdateParamUI definitions |
 | `OLMColorKey/` macOS source | Decompiled via general agents, main-agent IDA verification/review; MinGW production-path test passes 1,052 checks; user confirmed it works in Mac AE |
 | `OLMBlur/` macOS source | Ported 2026-10-07 from `OLMBlur.aex` 1.2.1 (main agent, IDA-verified); MinGW production-path test passes 201 checks (incl. an independent brute-force reference); Mac build/AE testing pending |
-| Port queue (user order) | OLMBlur (done) → OLMDistanceGradation → OLMSmoother2AE → OLMToonDilate → OLMKiraKira; references in `.opencode/olm-opentools-windows/<Name>/`, TEMP copies already at `%TEMP%\opencode\<Name>-analysis.aex` |
+| `OLMDistanceGradation/` macOS source | Ported 2026-10-07 from `DistanceGradation.aex` 0.8.2α (main agent, IDA-verified; OpenCV calls reimplemented); MinGW test passes 104 checks; Mac build/AE testing pending |
+| Port queue (user order) | OLMBlur (done) → OLMDistanceGradation (done) → OLMSmoother2AE → OLMToonDilate → OLMKiraKira; references in `.opencode/olm-opentools-windows/<Name>/`, TEMP copies already at `%TEMP%\opencode\<Name>-analysis.aex` |
 | `OLMColorKeep/` macOS source | Ported 2026-10-07 from `ColorKeep.aex` 1.0.1 (main agent, IDA-verified); MinGW production-path test passes 88 checks; user Mac AE testing in progress |
 | Windows-versus-Mac pixel comparison | Deferred by user ("99% of the look" is the bar) |
 
@@ -428,6 +429,7 @@ the Mac bundle in AE and reports it working.
   `test_color_key.cpp`; see the ColorKey section above for evidence and checks.
 - `OLMColorKeep/` — same six-file layout; `test_color_keep.cpp`.
 - `OLMBlur/` — same six-file layout; `test_blur.cpp`.
+- `OLMDistanceGradation/` — same six-file layout; `test_distance_gradation.cpp`.
 
 ## Porting workflow (proven on four plug-ins — follow it for the next one)
 
@@ -575,13 +577,70 @@ SDK-sample framework as ColorKeep); decompiled and implemented by the main agent
   division/no-bleed, alpha untouched, amount 0 pass-through, Legacy edge
   reach / flat areas / column-0 quirk.
 
+## OLMDistanceGradation (0.8.2 ALPHA; source verified, Mac host test pending)
+
+Reference `.opencode/olm-opentools-windows/OLMDistanceGradation/DistanceGradation.aex`
+(26 MB: **OpenCV 4.5.5 + IPP statically linked**; the plug-in itself is ~25
+functions at 0x181169680–0x181174FE0). It drives OpenCV through the old C
+API with IplImage wrappers (`0x181395220` = create image via PF handles,
+depth 8/16/32 = IPL_DEPTH_8U/16U/32F). The port reimplements only what is
+used, following OpenCV's arithmetic — no OpenCV dependency.
+
+- **Identity**: PiPL Name `Distance Gradation`, Match `OLM Distance
+  Gradation`, version 266752 = **PF_VERSION(0,8,2,ALPHA,0)** (stage bits = 1;
+  the static_assert caught it), flags `0x06000040` / `0x08001400`. About
+  `DistanceGradation v0.82\r…`. Registers with AEGP only for UI calls whose
+  results it discards (port skips both).
+- **Params** (position == uu.id): 1 Invert CB; 2 In/Out POPUP
+  `Inside|Outside|Both` **value = dephault = 0** (binary); 3/4 Inside/Outside
+  Threshold SLIDER 0–1000 / slider 0–512 / dflt 128; 5 Render Mode
+  `RGB|Layer` dflt 1; 6 Use Background Color CB; 7 Gradation Color red; 8
+  `BG Color ` (trailing space) black; 9 Interpolation
+  `Constant|Linear|Sphere|Power` dflt 2; 10 Power FLOAT 0.01–5 dflt 1 prec 2
+  flags COLLAPSE_TWIRLY; 11 Blur Mode `No Blur|Blur No Scale|Blur` dflt 1;
+  12 Blur Size SLIDER 0–4096 / 0–500, COLLAPSE_TWIRLY.
+- **UI** (`0x1811743A0`, PF_UpdateParamUI on a checked-out def): disable Power
+  unless Interp=Power; Outside Thr if In/Out=Inside; Inside Thr if Outside;
+  Gradation Color unless Render=RGB; BG Color unless Use BG; Blur Size if No Blur.
+- **PreRender**: plain checkout + rect unions (no expansion).
+- **Compute** (`0x181171D00`/`0x181170FF0`/`0x181172A10`, differ only in row
+  bytes): mask = cvSplit(alpha) → cvConvertScale to 8U (×1 / ×1/128 / ×255,
+  round-half-even, saturate) → cvThreshold(>1.0 → 255). Degenerate flag if
+  mask count is 0 or W·H. Gradation (`0x181174750`): NN-resize mask to
+  **full resolution** (W·ds.den/ds.num), cvDistTransform(L2, mask 0 =
+  precise Felzenszwalb; image border is NOT a zero — columns without zeros
+  are 1e15), linear-resize back, then Constant: BINARY(T=max(1,thr)) else
+  TRUNC(T = thr or 0.1 if 0), cvNormalize MINMAX to [0, 255|32768|1].
+  Inside: thr==0 → normalized mask (hard); else gradation. Outside: mask
+  = 255−mask then gradation. Both: inside + outside gradations (cvAdd).
+  Other In/Out (incl. default 0): binary uses an uninitialised buffer, port 0.
+  Blur (`cvSmooth(type = mode−1)`, OpenCV 4.5.5 confirmed): "Blur No Scale"
+  → **normalized** box, "Blur" → Gaussian σ auto; size 2·(num·size/den)+1
+  (unsigned), BORDER_REPLICATE. cvMerge(blurred,blurred,blurred,dist) →
+  cvConvert (round, saturate) into the **output world** (A=R=G=blurred,
+  B=unblurred).
+- **Composite** (pixel fns, iterate over output extent, reads input+output by
+  x,y): t = Invert ? g.R : 1−g.R; weight = inA (Inside/default), min(1,1−inA)
+  (Outside), 1 (Both); weight < 1e-4 (not Both) → write raw g channels with
+  alpha 0. Sphere t=sqrt(1−(1−t)²), Power t=t^power. Colour = Gradation Color
+  (RGB) / input RGB (Layer) / white. No BG: RGB=colour, A=weight·t. BG:
+  RGB=(1−t)·bg+t·colour (bg black unless Render is RGB/Layer), A=weight.
+  Degenerate: BG on → opaque BG colour, else all zero. 8/16 write
+  trunc(v·255|32768).
+- **Test** `test_distance_gradation.cpp`: params/UI, EDT vs brute force (20
+  random masks + no-zero mask), resize/normalize/kernels, Inside/Outside/Both,
+  all interpolations, Invert, Layer/RGB/BG, degenerate, downsample scaling,
+  Gaussian/box blur, 8/16/32 bpc.
+
 ## Next steps
 
-1. Continue the port queue (status table): OLMDistanceGradation next.
-   DistanceGradation (26 MB) and KiraKira (25 MB) are huge for AE effects —
-   check for bundled libraries / GPU code first.
+1. Continue the port queue (status table): OLMSmoother2AE next. ToonDilate
+   and KiraKira also link OpenCV+IPP statically (IPPCODE section) — find the
+   few cv:: calls from the app code and reimplement them as done for
+   DistanceGradation.
 2. Mac build + AE smoke test of OLMBlur (Legacy off: blur stays inside
-   opaque regions; Legacy checkbox on: older look).
+   opaque regions; Legacy checkbox on: older look) and OLMDistanceGradation
+   (note In/Out ships with value 0 — pick Inside/Outside/Both to see output).
 3. Finish user Mac AE testing of ColorKeep (build: ColorKey recipe with
    `-S OLMColorKeep -B build-colorkeep`; clear AE's cache after installing).
    Expect: count slider hides/shows pickers, picked opaque colors stay,
