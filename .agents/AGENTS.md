@@ -1,9 +1,9 @@
 # AGENTS.md — olm-opentools-mac
 
 Port of OLM OpenTools (Windows-only AE plug-ins for anime compositing) to macOS.
-Plug-ins: **OLM Directional Blur** and **OLM RadialBlur** (working in user Mac AE
-testing), **OLM Color Key** and **OLM Color Keep** (source verified; Mac build/host
-testing pending). This file is the complete handoff context (a new session needs
+Plug-ins: **OLM Directional Blur**, **OLM RadialBlur** and **OLM Color Key** (working
+in user Mac AE testing), **OLM Color Keep** (source verified; user Mac AE testing
+in progress). This file is the complete handoff context (a new session needs
 nothing else).
 
 ## Status (2026-10-07)
@@ -16,8 +16,8 @@ nothing else).
 | Alpha Fade in AE | **Resolved in user testing**: patched plug-in was cached; clearing AE's cache refreshed it and Alpha Fade works |
 | Windows `OLMRadialBlur.aex` (1.3.0, x64) | Decompiled by two subagents; all load-bearing facts re-verified in IDA by the main agent |
 | `OLMRadialBlur/` macOS source | Builds and works in user Mac AE testing after `d2355dd` fixed PF_UpdateParamUI definitions |
-| `OLMColorKey/` macOS source | Decompiled via general agents, main-agent IDA verification/review; MinGW production-path test passes 1,052 checks; Mac build/AE testing pending |
-| `OLMColorKeep/` macOS source | Ported 2026-10-07 from `ColorKeep.aex` 1.0.1 (main agent, IDA-verified); MinGW production-path test passes 88 checks; Mac build/AE testing pending |
+| `OLMColorKey/` macOS source | Decompiled via general agents, main-agent IDA verification/review; MinGW production-path test passes 1,052 checks; user confirmed it works in Mac AE |
+| `OLMColorKeep/` macOS source | Ported 2026-10-07 from `ColorKeep.aex` 1.0.1 (main agent, IDA-verified); MinGW production-path test passes 88 checks; user Mac AE testing in progress |
 | Windows-versus-Mac pixel comparison | Deferred by user ("99% of the look" is the bar) |
 
 **Warning to future agents:** the first pass of this port (commit `8cf0800`) contained a
@@ -272,7 +272,7 @@ Decompiled from `.opencode/olm-opentools-windows/OLMRadialBlur/OLMRadialBlur.aex
   border, 8/16/32 bpc). MinGW command mirrors the DirectionalBlur one (no
   iterate suites needed; links Smart_Utils/AEGP_SuiteHandler/MissingSuiteError).
 
-## OLMColorKey (2.3.1; source verified, Mac host test pending)
+## OLMColorKey (2.3.1; works in user Mac AE testing)
 
 Analyzed a TEMP copy, not the reference: original
 `.opencode/olm-opentools-windows/OLMColorKey/OLMColorKey.aex`;
@@ -376,8 +376,8 @@ all UI mode combinations/definition preservation, key/keep/replace, six spaces,
 threshold/precision/premultiplied modes, distance and edge profiles, downsampling,
 padded rows, partial extents, degenerate dimensions and injected-failure cleanup.
 Use the DirectionalBlur test compile recipe with `test_color_key.cpp` as source;
-link the same three SDK helper cpp files. Mac universal build, Rez/codesign and
-actual AE host behavior remain unverified until the user tests the bundle.
+link the same three SDK helper cpp files. The user has since built and tested
+the Mac bundle in AE and reports it working.
 
 ## Known deliberate deviations from the DirectionalBlur binary
 
@@ -479,7 +479,7 @@ installs without explicit permission; `.opencode/` is read-only reference.
   `AEGP_SuiteHandler(in_data->pica_basicP)` (Mac takes `const SPBasicSuite*`, not in/out data).
 - Reference-only dirs (do not edit): `.opencode/AfterEffectsSDK_*`, `.opencode/olm-opentools-windows/`.
 
-## OLMColorKeep (1.0.1; source verified, Mac host test pending)
+## OLMColorKeep (1.0.1; source verified, user Mac AE testing in progress)
 
 Reference `.opencode/olm-opentools-windows/OLMColorKeep/ColorKeep.aex` (27 KB, NO
 `OLM` prefix in the filename); IDA working copy
@@ -521,14 +521,11 @@ real functions, so the main agent decompiled and implemented it directly.
 
 ## Next steps
 
-1. Build ColorKeep on the Mac (same recipe as ColorKey with `-S OLMColorKeep
-   -B build-colorkeep`), install, clear AE's cache, smoke-test: count slider
-   hides/shows pickers, eyedropper-picked opaque colors stay, everything else
-   goes transparent, at 8/16/32 bpc.
-2. Build ColorKey on the Mac (commands above), install the `.plugin`, clear AE's
-   cache/relaunch and smoke-test key/keep, colors/threshold modes, replacement,
-   UI visibility and Thin/Blur in 8/16/32-bpc projects. RadialBlur now works in user testing.
-3. Windows/Mac pixel comparisons are deferred by user; visually close output is
+1. Finish user Mac AE testing of ColorKeep (build: ColorKey recipe with
+   `-S OLMColorKeep -B build-colorkeep`; clear AE's cache after installing).
+   Expect: count slider hides/shows pickers, picked opaque colors stay,
+   everything else goes transparent (RGB kept), at 8/16/32 bpc.
+2. Windows/Mac pixel comparisons are deferred by user; visually close output is
    the current goal, not a measured claim of bit-exact parity.
-4. If the noise field index safety wrap matters for parity, match the original OOB behaviour
+3. If the noise field index safety wrap matters for parity, match the original OOB behaviour
    behind a flag once the exact table-adjacent bytes in the original buffer are known.
