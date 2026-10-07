@@ -20,7 +20,8 @@ nothing else).
 | `OLMBlur/` macOS source | Ported 2026-10-07 from `OLMBlur.aex` 1.2.1 (main agent, IDA-verified); MinGW production-path test passes 201 checks (incl. an independent brute-force reference); Mac build/AE testing pending |
 | `OLMDistanceGradation/` macOS source | Ported 2026-10-07 from `DistanceGradation.aex` 0.8.2α (main agent, IDA-verified; OpenCV calls reimplemented); MinGW test passes 104 checks; Mac build/AE testing pending |
 | `OLMSmoother2AE/` macOS source | Ported 2026-10-07 from `OLMSmoother2.aex` 2.1.0 (delegated decompile, main-agent IDA spot-check, delegated implementation); MinGW test 992 checks; Mac build/AE testing pending |
-| Port queue (user order) | OLMBlur (done) → OLMDistanceGradation (done) → OLMSmoother2AE (done) → OLMToonDilate → OLMKiraKira; references in `.opencode/olm-opentools-windows/<Name>/` |
+| `OLMToonDilate/` macOS source | Ported 2026-10-07 from `OLMToonDilate.aex` 1.1.1 (delegated decompile, main-agent IDA verification of PiPL bytes and both flood passes); MinGW test 44 checks; Mac build/AE testing pending |
+| Port queue (user order) | OLMBlur (done) → OLMDistanceGradation (done) → OLMSmoother2AE (done) → OLMToonDilate (done) → OLMKiraKira; references in `.opencode/olm-opentools-windows/<Name>/` |
 | `OLMColorKeep/` macOS source | Ported 2026-10-07 from `ColorKeep.aex` 1.0.1 (main agent, IDA-verified); MinGW production-path test passes 88 checks; user Mac AE testing in progress |
 | Windows-versus-Mac pixel comparison | Deferred by user ("99% of the look" is the bar) |
 
@@ -673,11 +674,40 @@ by the implementation agent.
   recompiled and reran it (pass). Family A expected weight is computed in
   the test from the ramp formula, not from the plug-in.
 
+## OLM Toon Dilate — verified facts (2026-10-07)
+
+Windows `OLMToonDilate.aex` (3.9 MB, OpenCV 4.5.5+IPP linked but unused by
+the effect). Entry `entry_point` `0x1801ABCA0`. PiPL at file `0x3BA4BA`
+(MIB8). Main agent checked the resource bytes and both flood passes in
+`sub_1801A6150`.
+
+- **Identity**: Name `OLM Toon Dilate`, Match **`ADBE OLMToonDilate`** (not
+  `OLM …`), category `OLM Plug-ins`, version 559104 (1.1.1). About is
+  `OLM Toon Dilate 1.1\rToon Dilate Effect` (format string is `%s %d.%d\r%s`;
+  the third version digit is passed but not printed). Flags `0x02000044` /
+  `0x08021400`. No SEND_UPDATE_PARAMS_UI — UPDATE_PARAMS_UI and
+  USER_CHANGED_PARAM are nullsubs. Legacy RENDER is `return 0`.
+- **Params**: input + Search Radius float slider, position == id 1, default
+  2.0, valid/slider 0–100, precision 1, flags 0, curve tolerance 0.
+  num_params 2.
+- **PreRender**: checkout input 0 with the request unchanged (no full-layer
+  union). Union result/max rects. `RETURNS_EXTRA_PIXELS`.
+- **Render**: `utils->copy` first. Radius is float32 ceil of
+  `(downsample_x.num/den) * slider`; downsample_y ignored. Seed is exact
+  alpha maximum only (8: 255, 16: 32768, 32: 1.0f). Two-pass Chebyshev flood
+  on an int32 mask (0 = seed, `0xFFFFFFFF` = inf). Forward neighbors L, NW,
+  N, NE (tie keeps earlier). Backward R, SE, S, SW, overwrite only on a
+  strictly smaller distance. Color is a raw 4-channel copy from the winning
+  neighbor in the **output** world, gated by `(float)d <= radius`. No
+  OpenCV algorithm calls — `cv::Mat` only wraps the mask buffer.
+- **Test** `OLMToonDilate/test_toon_dilate.cpp`: 44 checks, 0 failures.
+  Build: `cmake -S OLMToonDilate -B build-toondilate`.
+
 ## Next steps
 
-1. Continue the port queue: OLMToonDilate next, then OLMKiraKira. Both link
-   OpenCV+IPP statically (IPPCODE section) — find the few cv:: calls from the
-   app code and reimplement them as done for DistanceGradation.
+1. Continue the port queue: OLMKiraKira. It links OpenCV+IPP statically
+   (IPPCODE) — find the few cv:: calls from the app code and reimplement
+   them as done for DistanceGradation.
 2. Mac build + AE smoke test of OLMSmoother2 (`cmake -S OLMSmoother2AE -B build-smoother2` with the usual SDK/arch flags; clear AE's cache). Expect: default v2 smooths edges; Smoothness 0 is a near pass-through (v2 still round-trips sRGB); Enable Color Key punches the picked color to transparent. Also smoke-test OLMBlur (Legacy off: blur stays inside
    opaque regions; Legacy checkbox on: older look) and OLMDistanceGradation
    (note In/Out ships with value 0 — pick Inside/Outside/Both to see output).
