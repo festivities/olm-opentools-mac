@@ -21,7 +21,8 @@ nothing else).
 | `OLMDistanceGradation/` macOS source | Ported 2026-10-07 from `DistanceGradation.aex` 0.8.2α (main agent, IDA-verified; OpenCV calls reimplemented); MinGW test passes 104 checks; Mac build/AE testing pending |
 | `OLMSmoother2AE/` macOS source | Ported 2026-10-07 from `OLMSmoother2.aex` 2.1.0 (delegated decompile, main-agent IDA spot-check, delegated implementation); MinGW test 992 checks; Mac build/AE testing pending |
 | `OLMToonDilate/` macOS source | Ported 2026-10-07 from `OLMToonDilate.aex` 1.1.1 (delegated decompile, main-agent IDA verification of PiPL bytes and both flood passes); MinGW test 44 checks; Mac build/AE testing pending |
-| Port queue (user order) | OLMBlur (done) → OLMDistanceGradation (done) → OLMSmoother2AE (done) → OLMToonDilate (done) → OLMKiraKira; references in `.opencode/olm-opentools-windows/<Name>/` |
+| `OLMKiraKira/` macOS source | Ported 2026-10-07 from `OLMKiraKira.aex` 3.3 (delegated decompile, main-agent IDA verification of PiPL, PreRender, exponential-IIR in-place backward pass, merge early-out); OpenCV boxFilter/GaussianBlur/warpAffine/resize/mixChannels reimplemented; MinGW test 61 checks; Mac build/AE testing pending. Ramp editor custom-UI drawing NOT ported (ramp stored/evaluated/flattened, Use Ramp greys color via UPDATE_PARAMS_UI) |
+| Port queue (user order) | OLMBlur (done) → OLMDistanceGradation (done) → OLMSmoother2AE (done) → OLMToonDilate (done) → OLMKiraKira (done); references in `.opencode/olm-opentools-windows/<Name>/` |
 | `OLMColorKeep/` macOS source | Ported 2026-10-07 from `ColorKeep.aex` 1.0.1 (main agent, IDA-verified); MinGW production-path test passes 88 checks; user Mac AE testing in progress |
 | Windows-versus-Mac pixel comparison | Deferred by user ("99% of the look" is the bar) |
 
@@ -703,11 +704,91 @@ the effect). Entry `entry_point` `0x1801ABCA0`. PiPL at file `0x3BA4BA`
 - **Test** `OLMToonDilate/test_toon_dilate.cpp`: 44 checks, 0 failures.
   Build: `cmake -S OLMToonDilate -B build-toondilate`.
 
+## OLM Kira Kira — verified facts (2026-10-07)
+
+Windows `OLMKiraKira.aex` (26 MB, OpenCV 4.5.5+IPP linked). Entry
+`entry_point` `0x1811560A0`. PiPL at file `0x188E2BA` (MIB8). Two subagents
+decompiled; main agent re-verified PiPL bytes, PreRender, the exponential-IIR
+backward pass, and the merge early-out in IDA (instance `7e249916d6bc`).
+
+- **Identity**: Name `OLM Kira Kira`, Match **`OLM OLM Kira Kira`** (doubled
+  OLM, as shipped), category `OLM Plug-ins`, version 1671168 (3.3.0). About
+  `OLM Kira Kira 3.3\rParameterized Kira Kira Effect` (format `%s %d.%d\r%s`).
+  Binary flags `0x02008040` / `0x08001400`. **Port adds
+  SEND_UPDATE_PARAMS_UI** → `0x06008040` so the Use Ramp disable logic (dead
+  in the binary because the flag is missing) actually runs. CUSTOM_UI is set;
+  the ramp *editor* drawing is not ported (see below). Legacy RENDER is a
+  stub; smart-render only. No RNG — fully deterministic.
+- **Params** (41; position ≠ uu.id): Channel popup id 8 (6 choices, items
+  `Alpha|Luminance|RGB|Brightness`, default 1, SUPERVISE); Blur Mode popup id
+  9 (3 choices, items `Box|Approximated Gaussian|Gaussian|Exponential`,
+  default 2, SUPERVISE); Merge mode popup id 17 (2 choices
+  `premultiply|add`, default 1, SUPERVISE|USE_VALUE_FOR_OLD_PROJECTS);
+  Approximated Input checkbox id 10; Brightness Gain float id 2 (default 0.1
+  — below its valid_min 1, as shipped — precision 3); Strength multiplier id
+  11 (0–1000 dflt 100); Fade Out float id 27 (0–1 dflt 0); Glow Opacity id 7
+  (0–10000 dflt 100); Source Opacity id 12 (0–100 dflt 100); Vertical/
+  Horizontal/Diagonal/Diagonal2 Length ids 3/4/5/26 (valid 0–1000, slider
+  0–200, dflt 50) each with a Color (ids 13/14/15/28) + a `Use Ramp` checkbox
+  (ids 18/20/22/35) + `Ramp` arbitrary-data (ids 19/21/23/36) inside a group;
+  Highlight Radius id 6 (valid 0–8000, slider 0–200, dflt 0) + Highlight
+  Color id 16 + Use Ramp id 24 + Ramp id 25; Glow Rotation angle id 1.
+- **UPDATE_PARAMS_UI**: for each of 5 (UseRamp, Color, Ramp) triples, disable
+  Color when Use Ramp is on and disable Ramp when off. Copies the live host
+  ParamDef and toggles only PF_PUI_DISABLED (grey, not hide).
+- **Ramp arbitrary data**: 608-byte handle; the 324-byte stop list lives at
+  handle+16 as `{int count; Stop{float x,a,r,g,b}[16]}` (default count 3:
+  red→orange→white). Flatten = 325 bytes = version byte `1` + the raw 324-byte
+  blob (byte-identical dump, so Win projects round-trip). Render only reads
+  the blob. Eval: greatest stop with `x<=t` and smallest with `x>t`, lerp all
+  of a/r/g/b; if the two x are within 1e-4 use the nearer single stop; count 0
+  → opaque black. Only RGB is used in the shared compose.
+- **PreRender**: checkout input 0 with the request copied verbatim (no
+  full-layer union); union result/max rects; RETURNS_EXTRA_PIXELS.
+- **Render**: NO unconditional copy-first (unlike the other ports). If all 5
+  lengths are 0 → `utils->copy` and return. Otherwise: decode world→CV_32F
+  RGBA (8:/255, 16:/32768, 32: mixChannels ARGB→RGBA). Optional half-res
+  (only when Approximated Input is on AND downsample_x>0.5): resize down
+  (INTER_LINEAR), sizes also scaled by downsample then halved. Mask via
+  transfer fn `f(x)=x<=T? (x/T)^(g+1)*T^g : x^g` (T=Fade*0.2, g=Strength*0.01
+  clamped >=0.001 except Color mode): Channel=pow(A,g); Luminance=f(.2126R+
+  .7152G+.0722B)*A; Brightness=f(max(R,G,B))*A; Color=4ch pow(C,g+1)*A.
+  5 arms at angles rot+{90,0,45,135} (deg) + highlight (angle 0): rotate mask
+  into a padded canvas (warpAffine, in-place in binary → ported with a
+  scratch), 1D horizontal blur, rotate back, crop center. Blur modes: 1 box
+  1×k; 2 box ×3 (vol k³); 3 Gaussian ksize (4k+1)×1 σ=k/2; 4 hand-rolled IIR
+  α=k/(k+1), β=k/(k+1)² — **binary runs in place so the backward pass reads
+  the forward result (second-order); the port replicates that**. Highlight is
+  a square (2k+1)² blur (box/gauss/×3). boxFilter normalize = !Color. Compose
+  accumulates per-direction (skip if <=0.001): shared modes weight by
+  clamp01(v*gain) and pick ramp or static RGB, alpha-union then un-premultiply;
+  Color mode divides by the blur volume and takes the source hue. Final
+  composite per pixel: clamp01(result.a*glowOpacity) and clamp01(src.a*
+  srcOpacity); if their sum is 0 write (0,0,0,0); merge 1 = premultiplied
+  average ÷ sum, merge 2 = straight add; **any other merge value leaves dst
+  untouched** (early-out, verified). Encode truncates (×255 / ×32768), no
+  round. Downsample uses only downsample_x.
+- **OpenCV reimplemented, not linked**: resize (INTER_LINEAR), warpAffine +
+  getRotationMatrix2D, boxFilter (BORDER_REFLECT_101), GaussianBlur, the
+  ARGB→RGBA shuffle. cv::Mat was only a buffer wrapper.
+- **Test** `OLMKiraKira/test_kira_kira.cpp`: 61 checks, 0 failures
+  (identities, zero-length copy, 4 channel modes, 4 blur modes, highlight
+  glow, merge add + invalid-merge no-write, half-res/downsample, ramp flatten
+  round-trip, Use Ramp UI disable). Build:
+  `cmake -S OLMKiraKira -B build-kirakira`.
+- **Not ported**: the ramp *editor* custom-UI drawing (PF_Cmd_EVENT /
+  Drawbot). Ramps still store, flatten, unflatten, interpolate, and drive the
+  render; only the interactive editor widget is absent, so a Mac user can't
+  redraw stops in-UI (existing Win-project ramps still render). Add the EVENT
+  draw handler if in-UI ramp editing is wanted.
+
 ## Next steps
 
-1. Continue the port queue: OLMKiraKira. It links OpenCV+IPP statically
-   (IPPCODE) — find the few cv:: calls from the app code and reimplement
-   them as done for DistanceGradation.
+1. Port queue is complete (all 5 remaining plug-ins ported + MinGW-tested).
+   Remaining work is Mac build + AE smoke testing, one plug-in at a time per
+   the user's plan. For each: `cmake -S <Dir> -B build-<name>` with the Mac
+   SDK + `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`, install, **clear AE's
+   plug-in cache**, relaunch.
 2. Mac build + AE smoke test of OLMSmoother2 (`cmake -S OLMSmoother2AE -B build-smoother2` with the usual SDK/arch flags; clear AE's cache). Expect: default v2 smooths edges; Smoothness 0 is a near pass-through (v2 still round-trips sRGB); Enable Color Key punches the picked color to transparent. Also smoke-test OLMBlur (Legacy off: blur stays inside
    opaque regions; Legacy checkbox on: older look) and OLMDistanceGradation
    (note In/Out ships with value 0 — pick Inside/Outside/Both to see output).
