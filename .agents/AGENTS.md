@@ -2,11 +2,11 @@
 
 Port of OLM OpenTools (Windows-only AE plug-ins for anime compositing) to macOS.
 Plug-ins: **OLM Directional Blur** and **OLM RadialBlur** (working in user Mac AE
-testing), **OLM Color Key** (source verified; Mac build/host testing pending).
-**Next target: OLM ColorKeep** — see "Next plug-in: OLMColorKeep" below; this file is
-the complete handoff context (a new session needs nothing else).
+testing), **OLM Color Key** and **OLM Color Keep** (source verified; Mac build/host
+testing pending). This file is the complete handoff context (a new session needs
+nothing else).
 
-## Status (2026-10-05)
+## Status (2026-10-07)
 
 | Item | State |
 |---|---|
@@ -17,7 +17,7 @@ the complete handoff context (a new session needs nothing else).
 | Windows `OLMRadialBlur.aex` (1.3.0, x64) | Decompiled by two subagents; all load-bearing facts re-verified in IDA by the main agent |
 | `OLMRadialBlur/` macOS source | Builds and works in user Mac AE testing after `d2355dd` fixed PF_UpdateParamUI definitions |
 | `OLMColorKey/` macOS source | Decompiled via general agents, main-agent IDA verification/review; MinGW production-path test passes 1,052 checks; Mac build/AE testing pending |
-| `OLMColorKeep` | **Next port target.** Reference: `.opencode/olm-opentools-windows/OLMColorKeep/ColorKeep.aex` (note: filename has NO `OLM` prefix) + user manual PDF in the same dir. Not yet decompiled. |
+| `OLMColorKeep/` macOS source | Ported 2026-10-07 from `ColorKeep.aex` 1.0.1 (main agent, IDA-verified); MinGW production-path test passes 88 checks; Mac build/AE testing pending |
 | Windows-versus-Mac pixel comparison | Deferred by user ("99% of the look" is the bar) |
 
 **Warning to future agents:** the first pass of this port (commit `8cf0800`) contained a
@@ -424,8 +424,9 @@ actual AE host behavior remain unverified until the user tests the bundle.
   production-path test.
 - `OLMColorKey/` — effect header/source, PiPL, Mac plist, CMake and
   `test_color_key.cpp`; see the ColorKey section above for evidence and checks.
+- `OLMColorKeep/` — same six-file layout; `test_color_keep.cpp`.
 
-## Porting workflow (proven on three plug-ins — follow it for the next one)
+## Porting workflow (proven on four plug-ins — follow it for the next one)
 
 1. **Decompile by delegation**: copy the reference `.aex` to
    `%TEMP%\opencode\<Name>-analysis.aex` and open THAT with `ida-mcp`
@@ -478,27 +479,52 @@ installs without explicit permission; `.opencode/` is read-only reference.
   `AEGP_SuiteHandler(in_data->pica_basicP)` (Mac takes `const SPBasicSuite*`, not in/out data).
 - Reference-only dirs (do not edit): `.opencode/AfterEffectsSDK_*`, `.opencode/olm-opentools-windows/`.
 
-## Next plug-in: OLMColorKeep
+## OLMColorKeep (1.0.1; source verified, Mac host test pending)
 
-- Reference: `.opencode/olm-opentools-windows/OLMColorKeep/ColorKeep.aex`
-  (NO `OLM` prefix in the filename) + `ColorKeepUserManualEN.pdf`.
-- It is the sibling of OLMColorKey (same vendor framework: expect the same
-  `MyEffect` C++ scaffolding, `entry_point` export, PiPL in the PE `.rsrc`,
-  5-arg `utils->copy` first in kernels, SmartRender-only, AEGP-registered UI
-  logic). The ColorKey decompile notes above map the framework; the color-space
-  conversions (HSV/Lab/YUV/YCrCb helpers) are very likely shared code — diff
-  against ColorKey's verified constants before re-deriving.
-- Follow the "Porting workflow" section. Deliverables land in a new
-  `OLMColorKeep/` directory mirroring `OLMColorKey/` (six files).
-- Watch for the ColorKey-class gotchas: index-vs-uu.id param tables, transitive
-  conversions inside checkout helpers, `PF_UpdateParamUI` needing a copy of the
-  real host `PF_ParamDef`, pre-render rect unions, and quirks that must be
-  reproduced (one-sided hue wrap, ignored channels, in-place Lab shifts).
+Reference `.opencode/olm-opentools-windows/OLMColorKeep/ColorKeep.aex` (27 KB, NO
+`OLM` prefix in the filename); IDA working copy
+`%TEMP%\opencode\OLMColorKeep-analysis.aex`. Unlike ColorKey this is the plain
+SDK-sample framework (AEGP_SuiteHandler, `entryPointFunc`, iterate suites), ~10
+real functions, so the main agent decompiled and implemented it directly.
+
+- **PiPL** (verified bytes): Name `Color Keep` (no OLM prefix), Match
+  `OLM Color Keep`, Category `OLM Plug-ins`, spec 13.29, version 526336
+  (1.0.1), out_flags `0x02000040`, out_flags2 `0x08001400`. Port adds
+  SEND_UPDATE_PARAMS_UI (`0x06000040`) so a freshly applied effect hides
+  unused pickers immediately. About: `Color Keep v1.01\r<desc>` (desc
+  `Keep the selected color from the source.\rCopyright 2010 OLM Digital, Inc.`).
+- **Dispatch** `0x1800025C0`: 0 About, 1 GlobalSetup (+RegisterWithAEGP
+  "Color Keep"), 4 Params, 11 RENDER (broken in the binary: count/colors in
+  its refcon are never initialised; unreachable under SmartRender, port
+  no-ops it), 13 USER_CHANGED_PARAM + 14 UPDATE_PARAMS_UI → `0x180002210`,
+  23 PreRender (checkout + rect union `0x180003B80`), 24 SmartRender `0x180001CA0`.
+- **Params**: position == uu.id. 1 `Enabled Color Num` SLIDER 0–100 dflt 1,
+  flags SUPERVISE; 2..101 `Color` COLOR, opaque black. num_params 102.
+- **UI**: reads the count stream at layer time and, for each Color i,
+  `SetDynamicStreamFlag(HIDDEN, undoable=false, i >= count)`; per-stream
+  errors ignored. Port reads `params[1]->u.sd.value` (same value).
+- **Render**: `utils->copy(input, output)`, then iterate over
+  `output->extent_hint` (progress_final = bottom − top). Colors come from
+  PF_ColorParamSuite1 as float ARGB. A pixel is kept iff ALL FOUR channels
+  (alpha included — key alpha is 1.0, so only fully opaque pixels can match)
+  equal one of the first `count` colors: 8 bpc `(u8)(int)((c+1/510)*255)`,
+  16 bpc `(u16)(int)((c+1/65536)*32768)`, 32 bpc `!(|d| > 1e-4f)` (NaN
+  matches — comiss/ja). Output RGB = input RGB always; alpha = input alpha
+  if kept, else 0. No threshold, no color spaces, no edge pipeline.
+- **Deviations**: count clamped to 0..100 before indexing; input layer
+  checked in (binary never checks in); RENDER no-op; added UPDATE_PARAMS_UI flag.
+- **Test** `OLMColorKeep/test_color_keep.cpp`: fake host, real EffectMain;
+  identities/defaults/flags/About, UI hiding for both commands at counts
+  0/1/37/100, keep/drop/alpha-match/count gating/extent pass-through,
+  quantisation boundaries at each depth, float NaN quirk, checkout balance.
+  Build with the standard MinGW recipe below (source `test_color_keep.cpp`).
 
 ## Next steps
 
-1. Port OLMColorKeep per the section above (decompile → verify → plan →
-   implement → verify → commit+push, all via the delegation workflow).
+1. Build ColorKeep on the Mac (same recipe as ColorKey with `-S OLMColorKeep
+   -B build-colorkeep`), install, clear AE's cache, smoke-test: count slider
+   hides/shows pickers, eyedropper-picked opaque colors stay, everything else
+   goes transparent, at 8/16/32 bpc.
 2. Build ColorKey on the Mac (commands above), install the `.plugin`, clear AE's
    cache/relaunch and smoke-test key/keep, colors/threshold modes, replacement,
    UI visibility and Thin/Blur in 8/16/32-bpc projects. RadialBlur now works in user testing.
