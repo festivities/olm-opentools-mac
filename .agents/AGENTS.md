@@ -17,6 +17,8 @@ nothing else).
 | Windows `OLMRadialBlur.aex` (1.3.0, x64) | Decompiled by two subagents; all load-bearing facts re-verified in IDA by the main agent |
 | `OLMRadialBlur/` macOS source | Builds and works in user Mac AE testing after `d2355dd` fixed PF_UpdateParamUI definitions |
 | `OLMColorKey/` macOS source | Decompiled via general agents, main-agent IDA verification/review; MinGW production-path test passes 1,052 checks; user confirmed it works in Mac AE |
+| `OLMBlur/` macOS source | Ported 2026-10-07 from `OLMBlur.aex` 1.2.1 (main agent, IDA-verified); MinGW production-path test passes 201 checks (incl. an independent brute-force reference); Mac build/AE testing pending |
+| Port queue (user order) | OLMBlur (done) → OLMDistanceGradation → OLMSmoother2AE → OLMToonDilate → OLMKiraKira; references in `.opencode/olm-opentools-windows/<Name>/`, TEMP copies already at `%TEMP%\opencode\<Name>-analysis.aex` |
 | `OLMColorKeep/` macOS source | Ported 2026-10-07 from `ColorKeep.aex` 1.0.1 (main agent, IDA-verified); MinGW production-path test passes 88 checks; user Mac AE testing in progress |
 | Windows-versus-Mac pixel comparison | Deferred by user ("99% of the look" is the bar) |
 
@@ -425,6 +427,7 @@ the Mac bundle in AE and reports it working.
 - `OLMColorKey/` — effect header/source, PiPL, Mac plist, CMake and
   `test_color_key.cpp`; see the ColorKey section above for evidence and checks.
 - `OLMColorKeep/` — same six-file layout; `test_color_keep.cpp`.
+- `OLMBlur/` — same six-file layout; `test_blur.cpp`.
 
 ## Porting workflow (proven on four plug-ins — follow it for the next one)
 
@@ -519,13 +522,71 @@ real functions, so the main agent decompiled and implemented it directly.
   quantisation boundaries at each depth, float NaN quirk, checkout balance.
   Build with the standard MinGW recipe below (source `test_color_keep.cpp`).
 
+## OLMBlur (1.2.1; source verified, Mac host test pending)
+
+Reference `.opencode/olm-opentools-windows/OLMBlur/OLMBlur.aex` (63 KB, same
+SDK-sample framework as ColorKeep); decompiled and implemented by the main agent.
+
+- **PiPL**: Name `OLM Blur`, **Match Name `OLM OLM Blur`** (doubled prefix is in
+  the binary; keep it or old projects lose the effect), version 591872
+  (1.2.1), out_flags `0x06000040` (already includes SEND_UPDATE_PARAMS_UI),
+  out_flags2 `0x08001400`. About `OLM Blur v1.2.1\r<desc>` (desc contains a `\n`).
+- **No AEGP registration** in the binary (plug-in ID 0 passed to AEGP); the
+  port registers. Strings `Radius`/`Sigma` exist but are unused.
+- **Params** (position: name, uu.id): 1 Blur Amount FLOAT 1–1000 / slider
+  1–50 / dflt 5 / prec 2 / curve_tolerance 0 (id 5); 2 Blur Smoothness FIXED
+  1–100 dflt 100 prec 1 PERCENT (id 6); 3 Number of Repeat SLIDER 1–10 dflt 2
+  (id 3); 4 Bias Direction POPUP `Vertical|Horizontal` dflt 1 (id 4);
+  5 Legacy CHECKBOX value 1 / dephault 0 / flags USE_VALUE_FOR_OLD_PROJECTS
+  (id 7) — new instances off, pre-Legacy projects on.
+- **UI** (UPDATE_PARAMS_UI only): Blur Smoothness always HIDDEN
+  (verified in disasm: hide=1 on both branches).
+- **PreRender**: request rect ∪= {0,0,in_data->width,height} (whole layer),
+  output flags = RETURNS_EXTRA_PIXELS, union result/max rects.
+- **Checkout** `0x180009B40`: amount=(float)double, smoothness=(float)(short)
+  (fixed>>16), repeat, bias, legacy.
+- **Render**: utils->copy(input, output); read input RGB as RAW floats
+  (0–255 / 0–32768 / float) and mask = alpha != 0; blur; write RGB only
+  (8/16: `(int)floorf(v+0.5)`, 32: raw). Alpha stays the copy.
+- **Current algorithm** (Legacy off): early-out if amount == 0. A = amount ·
+  downsample_x; k = powf(3/A, 1/(repeat-1)) (k=1 if repeat<2); for i:
+  r = A·k^i (double pow), R=(int)r, stop if R==0; σ=r/3, LUT[j]=expf(-j²/(2σ²)),
+  j=0..R. Vertical bias: row pass then column pass; Horizontal: columns
+  first. Pass (`0x180001000`/`1980`): unmasked pixel copies source; masked
+  pixel sums taps outward from itself (centre once) and **stops at the
+  first alpha==0 pixel** (blur never crosses transparent gaps), out of range
+  ends the direction; result = sum·(1/w). The binary's 6 bands per pass are
+  work splits only (collapsed in the port).
+- **Legacy algorithm** (`0x180007300` family): R = (int)(amount·ds);
+  σ0 = (amount·smooth/100)·(amount/3)·ds; for i=1..repeat σ=σ0/i, symmetric
+  LUT size 2R+1 (`0x180009E10`), same pass order. Pass (`0x1800014F0`/`1EA0`)
+  quirks reproduced: taps at coordinate 0 are skipped (`> 0` test),
+  out-of-range taps are skipped without stopping, alpha==0 tap stops; a
+  "previous tap colour" carry (init −1, reset only per band call) — if every
+  visited tap equals the previous one the source pixel is copied; empty
+  weight → 1.0. Bands are kept for Legacy because of the carry.
+- **Deviations**: plug-in registers with AEGP; LUT grows when k > 1 (binary
+  overruns its `(int)A+2` buffer when A < 3, e.g. at reduced resolution);
+  output writes clipped to the output world; RENDER no-op (binary's legacy
+  RENDER misreads float params as ints).
+- **Test** `OLMBlur/test_blur.cpp`: params/flags/About, Smoothness hiding,
+  pre-render rect + flag, 7 parameter cases (bias, repeat, downsample, k>1)
+  per depth matched exactly against an independent brute-force reference,
+  division/no-bleed, alpha untouched, amount 0 pass-through, Legacy edge
+  reach / flat areas / column-0 quirk.
+
 ## Next steps
 
-1. Finish user Mac AE testing of ColorKeep (build: ColorKey recipe with
+1. Continue the port queue (status table): OLMDistanceGradation next.
+   DistanceGradation (26 MB) and KiraKira (25 MB) are huge for AE effects —
+   check for bundled libraries / GPU code first.
+2. Mac build + AE smoke test of OLMBlur (Legacy off: blur stays inside
+   opaque regions; Legacy checkbox on: older look).
+3. Finish user Mac AE testing of ColorKeep (build: ColorKey recipe with
    `-S OLMColorKeep -B build-colorkeep`; clear AE's cache after installing).
    Expect: count slider hides/shows pickers, picked opaque colors stay,
    everything else goes transparent (RGB kept), at 8/16/32 bpc.
-2. Windows/Mac pixel comparisons are deferred by user; visually close output is
+4. Windows/Mac pixel comparisons are deferred by user; visually close output is
    the current goal, not a measured claim of bit-exact parity.
-3. If the noise field index safety wrap matters for parity, match the original OOB behaviour
+5. If the noise field index safety wrap matters for parity, match the original OOB behaviour
    behind a flag once the exact table-adjacent bytes in the original buffer are known.
