@@ -19,7 +19,8 @@ nothing else).
 | `OLMColorKey/` macOS source | Decompiled via general agents, main-agent IDA verification/review; MinGW production-path test passes 1,052 checks; user confirmed it works in Mac AE |
 | `OLMBlur/` macOS source | Ported 2026-10-07 from `OLMBlur.aex` 1.2.1 (main agent, IDA-verified); MinGW production-path test passes 201 checks (incl. an independent brute-force reference); Mac build/AE testing pending |
 | `OLMDistanceGradation/` macOS source | Ported 2026-10-07 from `DistanceGradation.aex` 0.8.2α (main agent, IDA-verified; OpenCV calls reimplemented); MinGW test passes 104 checks; Mac build/AE testing pending |
-| Port queue (user order) | OLMBlur (done) → OLMDistanceGradation (done) → OLMSmoother2AE → OLMToonDilate → OLMKiraKira; references in `.opencode/olm-opentools-windows/<Name>/`, TEMP copies already at `%TEMP%\opencode\<Name>-analysis.aex` |
+| `OLMSmoother2AE/` macOS source | Ported 2026-10-07 from `OLMSmoother2.aex` 2.1.0 (delegated decompile, main-agent IDA spot-check, delegated implementation); MinGW test 992 checks; Mac build/AE testing pending |
+| Port queue (user order) | OLMBlur (done) → OLMDistanceGradation (done) → OLMSmoother2AE (done) → OLMToonDilate → OLMKiraKira; references in `.opencode/olm-opentools-windows/<Name>/` |
 | `OLMColorKeep/` macOS source | Ported 2026-10-07 from `ColorKeep.aex` 1.0.1 (main agent, IDA-verified); MinGW production-path test passes 88 checks; user Mac AE testing in progress |
 | Windows-versus-Mac pixel comparison | Deferred by user ("99% of the look" is the bar) |
 
@@ -632,13 +633,52 @@ used, following OpenCV's arithmetic — no OpenCV dependency.
   all interpolations, Invert, Layer/RGB/BG, degenerate, downsample scaling,
   Gaussian/box blur, 8/16/32 bpc.
 
+## OLMSmoother2 (2.1.0; source verified, Mac host test pending)
+
+Reference `.opencode/olm-opentools-windows/OLMSmoother2AE/OLMSmoother2.aex`
+(192 KB, MyEffect framework, OpenMP, no OpenCV). Decompile was started in an
+interrupted session and finished by two general agents; main agent verified
+PiPL bytes (file offset `0x2E8B0`), blend `0x18000ABC0` (mix weight clamped
+at 1, not divided by the sum), and the unpremultiply/gamma clamp in
+`0x18000B1E0`. Stair integrator `0x1800137C0` was translated from decompile
+by the implementation agent.
+
+- **Identity**: Name and Match `OLM Smoother v2`, version 1081344 (2.1.0),
+  raw flags `0x02000440` / `0x08001400`. Port adds SEND_UPDATE_PARAMS_UI
+  (`0x06000440`) in GlobalSetup and PiPL — the SDK will not send
+  UPDATE_PARAMS_UI without it. About `OLM Smoother v2 2.1\rSmooth images.`
+- **Params** (position ≠ uu.id): 1 Enable Color Key (id 1); 2 Color Key white
+  (id 2); 3 Invert Color Key (id 15); 4 Smoothness 0–100 dflt 100 (id 3);
+  5 Extra Smooth 0–100 dflt 0 (id 4); 6 Smooth Range 0–100 dflt 2 (id 5);
+  7 Version `v1|v2` dflt 2 (id 6); 8 Gamma `None|Gamma Colors|All Colors`
+  dflt 1 SUPERVISE (id 7); 9 Gamma Value 1–4.8 dflt 2.4 prec 2 (id 8);
+  10 Number of Gamma Colors 0–5 dflt 1 SUPERVISE (id 9); 11–15 Gamma Color
+  black (ids 10–14). num_params 16. USER_CHANGED_PARAM is a no-op.
+- **UI**: disable Color Key + Invert when Enable is off; disable Gamma Value
+  when mode is None; disable the count unless mode is Gamma Colors; hide
+  Gamma Color i unless mode is Gamma Colors and i < count. Disable copies
+  the live `params[]` definition and toggles only `PF_PUI_DISABLED`.
+- **Render**: `utils->copy` first. v2 converts RGB sRGB↔linear through
+  10000-entry tables (`i/9999`, IEC formulas, double pow/lerp). Key match is
+  RGB-only, `|d| < 1/510`, alpha ignored; invert keeps only matches. Edge
+  bytes are left/up/up-left/up-right; b3 requires `x+1 < W-1`. Distance is
+  max channel/luma delta plus `|dA|`, both-transparent = 0. Threshold is
+  `SmoothRange/100 + 0.001`. MLAA (four edge families + corners + stair
+  area) blends with weight sum clamped at 1. Gamma All Colors / matching
+  Gamma Colors apply `pow(1/gamma)` before premultiply and `pow(gamma)`
+  after unpremultiply. Writers round half-up (`(int)(v*scale+0.5)`), not
+  truncate. Serial loops (binary is OpenMP). Sample list stops at 12 instead
+  of throwing. Dirty-rect shrink is dead on the live path (flag never set).
+- **Test** `OLMSmoother2AE/test_smoother2.cpp`: 992 checks. Main agent
+  recompiled and reran it (pass). Family A expected weight is computed in
+  the test from the ramp formula, not from the plug-in.
+
 ## Next steps
 
-1. Continue the port queue (status table): OLMSmoother2AE next. ToonDilate
-   and KiraKira also link OpenCV+IPP statically (IPPCODE section) — find the
-   few cv:: calls from the app code and reimplement them as done for
-   DistanceGradation.
-2. Mac build + AE smoke test of OLMBlur (Legacy off: blur stays inside
+1. Continue the port queue: OLMToonDilate next, then OLMKiraKira. Both link
+   OpenCV+IPP statically (IPPCODE section) — find the few cv:: calls from the
+   app code and reimplement them as done for DistanceGradation.
+2. Mac build + AE smoke test of OLMSmoother2 (`cmake -S OLMSmoother2AE -B build-smoother2` with the usual SDK/arch flags; clear AE's cache). Expect: default v2 smooths edges; Smoothness 0 is a near pass-through (v2 still round-trips sRGB); Enable Color Key punches the picked color to transparent. Also smoke-test OLMBlur (Legacy off: blur stays inside
    opaque regions; Legacy checkbox on: older look) and OLMDistanceGradation
    (note In/Out ships with value 0 — pick Inside/Outside/Both to see output).
 3. Finish user Mac AE testing of ColorKeep (build: ColorKey recipe with
