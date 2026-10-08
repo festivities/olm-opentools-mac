@@ -22,11 +22,11 @@ time; build with `./build-all.sh` (below).
 | OLMDirectionalBlur | `OLMDirectionalBlur.aex` 1.1.1 | ✅ **Confirmed in user Mac AE** (Alpha Fade works after clearing AE's cache) |
 | OLMRadialBlur | `OLMRadialBlur.aex` 1.3.0 | ✅ **Confirmed in user Mac AE** (after `d2355dd` PF_UpdateParamUI fix) |
 | OLMColorKey | `OLMColorKey.aex` 2.3.1 | ✅ **Confirmed in user Mac AE**; MinGW 1,052 checks |
-| OLMColorKeep | `ColorKeep.aex` 1.0.1 (no OLM prefix) | Source verified; MinGW 88 checks; **user Mac AE testing in progress** |
-| OLMBlur | `OLMBlur.aex` 1.2.1 | MinGW 201 checks (incl. brute-force ref); **Mac build/AE pending** |
-| OLMDistanceGradation | `DistanceGradation.aex` 0.8.2α | MinGW 104 checks; OpenCV reimplemented; **Mac build/AE pending** |
-| OLMSmoother2AE | `OLMSmoother2.aex` 2.1.0 | MinGW 992 checks; **Mac build/AE pending** |
-| OLMToonDilate | `OLMToonDilate.aex` 1.1.1 | MinGW 44 checks; **Mac build/AE pending** |
+| OLMColorKeep | `ColorKeep.aex` 1.0.1 (no OLM prefix) | Source verified; MinGW 88 checks; ✅ **Confirmed in user Mac AE** |
+| OLMBlur | `OLMBlur.aex` 1.2.1 | MinGW 201 checks (incl. brute-force ref); ✅ **Confirmed in user Mac AE** |
+| OLMDistanceGradation | `DistanceGradation.aex` 0.8.2α | MinGW 104 checks; OpenCV reimplemented; ✅ **Confirmed in user Mac AE** |
+| OLMSmoother2AE | `OLMSmoother2.aex` 2.1.0 | MinGW 995 checks + bit-exact vs the Windows kernel on 36 differential runs; **Mac rebuild + AE retest pending** (no-smoothing-at-defaults bug fixed, see section) |
+| OLMToonDilate | `OLMToonDilate.aex` 1.1.1 | MinGW 44 checks; **Mac build/AE pending (user's next test target)** |
 | OLMKiraKira | `OLMKiraKira.aex` 3.3 | MinGW 61 checks; OpenCV reimplemented; ramp *editor* UI not ported; **Mac build/AE pending** |
 
 Port queue (user order, all done): OLMBlur → OLMDistanceGradation → OLMSmoother2AE
@@ -664,15 +664,77 @@ used, following OpenCV's arithmetic — no OpenCV dependency.
   all interpolations, Invert, Layer/RGB/BG, degenerate, downsample scaling,
   Gaussian/box blur, 8/16/32 bpc.
 
-## OLMSmoother2 (2.1.0; source verified, Mac host test pending)
+## OLMSmoother2 (2.1.0; fixed 2026-10-08, Mac rebuild + AE retest pending)
 
 Reference `.opencode/olm-opentools-windows/OLMSmoother2AE/OLMSmoother2.aex`
 (192 KB, MyEffect framework, OpenMP, no OpenCV). Decompile was started in an
 interrupted session and finished by two general agents; main agent verified
 PiPL bytes (file offset `0x2E8B0`), blend `0x18000ABC0` (mix weight clamped
 at 1, not divided by the sum), and the unpremultiply/gamma clamp in
-`0x18000B1E0`. Stair integrator `0x1800137C0` was translated from decompile
-by the implementation agent.
+`0x18000B1E0`. Stair integrator `0x1800137C0` matches line-for-line.
+
+User symptom (Mac AE, fresh effect, untouched defaults): lineart stayed aliased,
+unlike the Windows build ("maximum smoothing" per the official manual). The
+port's own 992-check fake-host test passed because it never exercised the
+affected paths — every smoothing scenario used v1 or hand-picked pixels outside
+run-gated/stair configurations.
+
+Root causes found by delegated re-analysis (both subagent reports verified
+function-by-function in IDA by the main agent) and fixed:
+
+1. **Run-gated corners inverted (the user's bug).** `0x180012E60/13020/133B0/
+   13200` APPEND samples when `run1<2 || run2<2 || diagonal-byte ABSENT`; the
+   port RETURNED on that condition and appended only on its complement. These
+   0.5-base corner blends (wsum 0.5, e.g. sRGB 188 on a black/white edge) fire
+   on common short-run lineart junctions — the port skipped them all.
+2. **"Fifth" helper h-split.** `0x18000F870/F6C0/F800/F650/F8E0/F730/F950/F7A0`
+   pass h = 1.0 for end-type {2,6} and 0.5 for {3,7}; the port hardcoded 0.5
+   (halving those weights). The `!=4`-gated variants (`F560/F420/F2E0/F1A0/
+   F510/F3D0/F290/F150/F5B0/F330/F1F0/F600/F380/F240/F4C0/F470`) pass h = 1.0
+   (from the dispatcher's xmm2), fifth or half scale — now transcribed 1:1.
+3. **Family C's 2nd end was family D's table.** Binary uses DFF0-gated E350
+   (down sample) via `F470` (half)/`F1F0` (fifth)/`F730` (split); the port used
+   E080-gated E3E0 (right sample). Family B fifth-groups gate on E110, not
+   E230; A/B case 14/74 = split + plain-fifth.
+4. **Five reclassifier byte flips.** E1A0/E230/DFF0/E2C0 read the `-3` offset =
+   b1 of the left neighbor, not b3; DED0's 1-term = b0(S3+1,S4), not b0(S3,S4).
+5. **RIGHT searches off-by-one.** D8C0/DC90 read all EndType bytes at the STOP
+   pixel (ir+1), guarded to 0 when OOB, a5 = b3(ir,·); the port read at ir.
+   (LEFT/UP/DOWN searches verified matching.)
+6. **Stair walks.** 10DE0 rewrote state as (cx,cy-1) double-decrementing y and
+   returned {X,Y-1} on the exhausted path (binary: {X,Y}); 10A90's limit is
+   `(h-sy <= w-x-1) ? h-sy : w-x` minus 1 (port had min-1, one short at the
+   right border); 11660/11A60 walk-2 had the same double-decrement + {X,Y-1}
+   keeps (binary keeps {X,Y}). 10C90/10B90/10990/10F00 verified matching.
+7. **Dispatcher table.** Cases {2,64,66,67,69-71,98,102,162,194,195,226} run
+   FamilyB **then** FamilyC (fall-through at `0x18000C5F2`); cases
+   {35,42,43,170,171} are 113C0→FamilyC→Normalize with **no** FamilyB
+   (`0x18000CA83`); cases {8,16,24,25,28,49,56,57,60,140,152,153,156} run
+   FamilyD **then** FamilyA (`0x18000C889→C893`) — all three missed by the
+   first pass. Last-row idx forces bits 64+128 set (n6=false, n7=false
+   defaults). Everything else in the 253-case table verified matching by
+   mechanical extraction of the jump table at `0x18000CB50`.
+8. **ExtendedA1st numerator** `0x18000ED00`: `walked.x - a[0] + 1`, not
+   `a[3] - walked.x + 1`.
+9. **sRGB LUT race.** The port built the 10000-entry tables lazily at first
+   render (racy under SUPPORTS_THREADED_RENDERING); the binary builds them at
+   GlobalSetup (`0x180001940`). The port now builds at GlobalSetup too.
+
+Debunked (do NOT re-chase): a subagent claimed params check out by uu.id and
+AE files params by id. False — the SDK appends by add order, the binary's own
+id→position table (`sub_1800080C0`, seeded with input id 0 at table[0] in
+`sub_180005290`) resolves every checkout to the same add-order positions the
+port uses, and all value extractors read the same def union fields. The port's
+param indexing was and is correct.
+
+Verification: a differential harness loads the real `.aex`, calls its 8-bit
+kernel `0x180003EB0` directly with a hand-built ctx (LUTs built by the
+binary's own `0x18000A8E0/A740`), and diffs the output against the port on the
+same input. **0 differing pixels on 6 images × 6 param combos** (hard/AA
+diagonals, uniform noise, blobs, bars, 3-level noise; v1/v2, smoothness 25–100,
+extra 0–100, range 0–10). Harness + probes live in `%TEMP%\opencode`
+(`diff_kernel.cpp`, `smoother2_probe.cpp`, `fam_probe.cpp`); TEMP copies of the
+reference stay out of the repo.
 
 - **Identity**: Name and Match `OLM Smoother v2`, version 1081344 (2.1.0),
   raw flags `0x02000440` / `0x08001400`. Port adds SEND_UPDATE_PARAMS_UI
@@ -700,9 +762,11 @@ by the implementation agent.
   after unpremultiply. Writers round half-up (`(int)(v*scale+0.5)`), not
   truncate. Serial loops (binary is OpenMP). Sample list stops at 12 instead
   of throwing. Dirty-rect shrink is dead on the live path (flag never set).
-- **Test** `OLMSmoother2AE/test_smoother2.cpp`: 992 checks. Main agent
-  recompiled and reran it (pass). Family A expected weight is computed in
-  the test from the ramp formula, not from the plug-in.
+- **Test** `OLMSmoother2AE/test_smoother2.cpp`: 995 checks. Main agent
+  recompiled and reran it (pass). The smoothing scenarios now assert the
+  run-gated corner blend (wsum 0.5 from the 0.4/0.2/0.4 split at 0.5 base,
+  hand-derived from the `0x180012E60` decompile) instead of the old
+  F560-ramp expectation, which encoded the pre-fix end-type/gate errors.
 
 ## OLM Toon Dilate — verified facts (2026-10-07)
 
@@ -829,18 +893,13 @@ unless a smoke test turns up a bug.
    into AE's Plug-ins folder, **clear AE's plug-in cache** (Preferences, or
    delete the cache dir), relaunch. A stale cache is the #1 cause of "the effect
    did nothing" — always rule it out first. The effect appears under
-   `OLM Plug-ins`. Per-plug-in expectations:
-   - **OLMColorKeep** (user testing in progress): count slider shows/hides the
-     pickers; picked opaque colors stay, everything else goes transparent (RGB
-     kept); 8/16/32 bpc.
-   - **OLMBlur**: Legacy off → blur stays inside opaque regions; Legacy on →
-     older look.
-   - **OLMDistanceGradation**: In/Out popup ships at value 0 — pick
-     Inside/Outside/Both or you get no output.
-   - **OLMSmoother2AE**: default v2 smooths edges; Smoothness 0 ≈ pass-through
-     (v2 still round-trips sRGB); Enable Color Key punches the picked color to
-     transparent.
-   - **OLMToonDilate**: grows fully-opaque edges outward by Search Radius using
+    `OLM Plug-ins`. Per-plug-in expectations (Blur, DistanceGradation,
+    ColorKeep already user-confirmed working):
+    - **OLMSmoother2AE** (fixed 2026-10-08 — **rebuild from latest first**):
+      default v2 now smooths edges like Windows (run-gated corners fixed);
+      Smoothness 0 ≈ pass-through (v2 still round-trips sRGB); Enable Color Key
+      punches the picked color to transparent.
+       - **OLMToonDilate** (user's next test target): grows fully-opaque edges outward by Search Radius using
      nearest-opaque color (Chebyshev); Search Radius 0 = pass-through.
    - **OLMKiraKira**: 4-armed sparkle + highlight glow on bright/opaque areas;
      Use Ramp greys the flat Color picker. The ramp *editor* widget is not

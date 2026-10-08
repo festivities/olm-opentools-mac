@@ -2,10 +2,11 @@
 // SMART_RENDER below. Covers: 16-param identities/defaults, UPDATE_PARAMS_UI
 // visibility for all control modes via mocked AEGP suites (full-def pass
 // through, zeroed-def rejection), v1/v2 passthrough at 8/16/32 bpc, color
-// key + invert on RGB only, edge distance/edge-byte layout, the family-A
-// ramp blend checked against an independently computed ramp formula, the
-// isolated-diagonal corner mix (0.4/0.2/0.4 at k = 0.125), the v2 gamma
-// All-Colors pow path on a real blend, and checkout/checkin balance.
+// key + invert on RGB only, edge distance/edge-byte layout, the run-gated
+// corner blend (0.4/0.2/0.4 split at 0.5 base, wsum 0.5) checked against an
+// independently computed weight sum, the isolated-diagonal corner mix
+// (0.4/0.2/0.4 at k = 0.125), the v2 gamma All-Colors pow path on a real
+// blend, and checkout/checkin balance.
 #include "OLMSmoother2.cpp"
 
 #include <algorithm>
@@ -1012,12 +1013,15 @@ bool verify_edges() {
     return true;
 }
 
-// --- 5. family A ramp blend vs an independently computed ramp ----------------
-
+// --- 5. family A image: the run-gated corner blend ---------------------------
 // Image (5x3): rows 0-1 = [W B B B B], row 2 = [W W W W W] (opaque).
 // v1, Smoothness 100, Extra Smooth 0, Range 2, no key, gamma None.
-// Only pixel (2,1) blends: family A, left end type 2 at x=1, right end
-// type 0 at x=3 -> F560 -> E4F0 with scale 0.5, h 0.5.
+// Only pixel (1,1) blends: idx 22 -> RunGatedDownLeft at full s. Its searches
+// find runs 3 (right, D8C0 ends at x=3 type 0) and 2 (up, CFA0 ends at y=0),
+// and b2(1,2) is absent, so the binary appends (0x180012E60): mn = min(3,2)
+// = 2 -> base 0.5 (not the 0.125 short-run base); k = 0.5 * s; weights
+// 0.4k/0.2k/0.4k = 0.2/0.1/0.2, wsum = 0.5. Blend of the black pixel with the
+// three white corner samples = 0.5 gray, alpha stays 1.
 bool ScenarioFamilyA(TestHost &host, int depth) {
     if (!init_host(host, depth, 5, 3)) {
         std::printf("FAIL: familyA host init (%d)\n", depth);
@@ -1035,43 +1039,37 @@ bool ScenarioFamilyA(TestHost &host, int depth) {
     host.params[OLMS2_SMOOTH_RANGE].u.sd.value = 2;
     if (!RenderChecked(host, "family A")) return false;
 
-    // Independent ramp computation (float, same op order as the binary):
-    //   L = (right - left + 1) * (0.5*es + 0.5) * s = 3 * 0.5 * 1.0 = 1.5
-    //   d = x - left = 1; h = 0.5
-    //   a = (1 - d/L) * h; L < d+1 -> w = (L - d) * a * 0.5
-    const float s = 100.0f / 100.0f;
-    const float scale = 0.0f * 0.5f + 0.5f;
-    const float L = (float)(3 - 1 + 1) * scale * s;
-    const float d = (float)(2 - 1);
-    const float h = 0.5f;
-    const float t = d / L;
-    const float a = (1.0f - t) * h;
-    const float w = (L - d) * a * 0.5f;
-    CHECK(w > 0.0f, "ramp weight nonzero");
+    // Independent corner-weight computation (the run-gated 0.4/0.2/0.4 split
+    // at 0.5 base, s = 1, full s_scale): wsum = 0.5, so a black pixel blended
+    // with white samples lands at exactly 0.5.
+    const float wsum = (0.4f + 0.2f + 0.4f) * (0.5f * 1.0f * 1.0f);
+    CHECK(wsum == 0.5f, "corner weight sums to 0.5");
 
-    const float expect = w;  // blend of black pixel with white sample = w
+    const float expect = EncDec(host, wsum);  // 0.5 quantizes to code 128
     if (depth == 8) {
-        CHECK(PixelIs(host, host.output, 2, 1, expect, expect, expect, 1.0f),
-              "family A blend at (2,1) equals the ramp mix (8-bit)");
+        CHECK(PixelIs(host, host.output, 1, 1, expect, expect, expect, 1.0f),
+              "run-gated corner blend at (1,1) equals the 0.5 mix (8-bit)");
         const float expect_decoded =
-            (float)(A_u_char)(int)((w * 255.0f) + 0.5f) * 0.0039215689f;
-        CHECK(ReadPixel(host, host.output, 2, 1).r == expect_decoded,
-              "family A writer rounding (int)(v*255+0.5)");
+            (float)(A_u_char)(int)((wsum * 255.0f) + 0.5f) * 0.0039215689f;
+        CHECK(ReadPixel(host, host.output, 1, 1).r == expect_decoded,
+              "corner writer rounding (int)(v*255+0.5)");
     } else if (depth == 16) {
-        CHECK(PixelIs(host, host.output, 2, 1, expect, expect, expect, 1.0f),
-              "family A blend at (2,1) equals the ramp mix (16-bit)");
+        CHECK(PixelIs(host, host.output, 1, 1, expect, expect, expect, 1.0f),
+              "run-gated corner blend at (1,1) equals the 0.5 mix (16-bit)");
     } else {
-        CHECK(PixelIs(host, host.output, 2, 1, expect, expect, expect, 1.0f),
-              "family A blend at (2,1) equals the ramp mix (32-bit)");
+        CHECK(PixelIs(host, host.output, 1, 1, expect, expect, expect, 1.0f),
+              "run-gated corner blend at (1,1) equals the 0.5 mix (32-bit)");
     }
-    // Neighbours must be untouched.
+    // Neighbours must be untouched (in particular (2,1), the old scenario's
+    // blend pixel: the corrected end-type classification leaves it alone).
+    CHECK(PixelIs(host, host.output, 2, 1, 0, 0, 0, 1), "(2,1) untouched");
     CHECK(PixelIs(host, host.output, 3, 1, 0, 0, 0, 1), "(3,1) untouched");
     CHECK(PixelIs(host, host.output, 4, 1, 0, 0, 0, 1), "(4,1) untouched");
-    CHECK(PixelIs(host, host.output, 1, 1, 0, 0, 0, 1), "(1,1) untouched");
-    CHECK(PixelIs(host, host.output, 2, 0, 0, 0, 0, 1), "(2,0) untouched");
-    CHECK(PixelIs(host, host.output, 2, 2, 1, 1, 1, 1), "(2,2) untouched");
     CHECK(PixelIs(host, host.output, 0, 1, 1, 1, 1, 1), "(0,1) untouched");
-    std::printf("family A ramp blend depth %d OK (w=%g)\n", depth, (double)w);
+    CHECK(PixelIs(host, host.output, 1, 0, 0, 0, 0, 1), "(1,0) untouched");
+    CHECK(PixelIs(host, host.output, 1, 2, 1, 1, 1, 1), "(1,2) untouched");
+    CHECK(PixelIs(host, host.output, 2, 2, 1, 1, 1, 1), "(2,2) untouched");
+    std::printf("run-gated corner blend depth %d OK (wsum=%g)\n", depth, (double)wsum);
     teardown_host(host);
     return true;
 }
@@ -1129,23 +1127,18 @@ bool ScenarioGamma(TestHost &host, int depth) {
     host.params[OLMS2_GAMMA_VALUE].u.fs_d.value = 2.4;
     if (!RenderChecked(host, "gamma all colors")) return false;
 
-    // Same ramp weight as ScenarioFamilyA; the blend happens on linear
-    // values (black=0, white=1) -> result = w (linear); then B1E0 applies
-    // pow(v, 2.4) and the writer encodes to sRGB.
-    const float s = 1.0f;
-    const float scale = 0.5f;
-    const float L = (float)(3 - 1 + 1) * scale * s;
-    const float d = 1.0f;
-    const float h = 0.5f;
-    const float w = (L - d) * ((1.0f - d / L) * h) * 0.5f;
-    const double linear = (double)w;
+    // Same corner blend as ScenarioFamilyA (wsum = 0.5 of white into black),
+    // but the blend happens on linear values (black=0, white=1) -> result =
+    // 0.5 linear; then B1E0 applies pow(v, 2.4) and the writer encodes to sRGB.
+    const float wsum = (0.4f + 0.2f + 0.4f) * (0.5f * 1.0f * 1.0f);
+    const double linear = (double)wsum;
     const double gammaed = std::pow(linear, 2.4);
     const double enc = gammaed < 0.0031308
                            ? gammaed * 12.92
                            : std::pow(gammaed, 1.0 / 2.4) * 1.055 - 0.055;
     if (depth == 8) {
         const float want = (float)enc;
-        const PixelValues got = ReadPixel(host, host.output, 2, 1);
+        const PixelValues got = ReadPixel(host, host.output, 1, 1);
         const float tol = 1.5f / 255.0f;  // LUT lerp + encode rounding slack
         CHECK(fabsf(got.r - want) <= tol && fabsf(got.g - want) <= tol &&
                   fabsf(got.b - want) <= tol && got.a == 1.0f,
@@ -1153,7 +1146,7 @@ bool ScenarioGamma(TestHost &host, int depth) {
         std::printf("gamma blend: got %g want %g\n", (double)got.r, (double)enc);
     } else {
         const float want = (float)enc;
-        const PixelValues got = ReadPixel(host, host.output, 2, 1);
+        const PixelValues got = ReadPixel(host, host.output, 1, 1);
         const float tol = depth == 16 ? 2.0f / 32768.0f : 1e-6f;
         CHECK(fabsf(got.r - want) <= tol && fabsf(got.g - want) <= tol &&
                   fabsf(got.b - want) <= tol,

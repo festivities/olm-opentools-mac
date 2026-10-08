@@ -60,6 +60,10 @@ static_assert(PF_VERSION(OLMS2_MAJOR_VERSION, OLMS2_MINOR_VERSION,
 
 AEGP_PluginID g_aegp_id = 0;
 
+void BuildLuts();  // defined below; called at GlobalSetup like the binary
+                   // (0x180001940 builds both sRGB LUTs once, single-threaded,
+                   // so SmartRender threads never race the lazy init).
+
 PF_Err About(PF_InData *in_data, PF_OutData *out_data) {
     (void)in_data;
     PF_SPRINTF(out_data->return_msg, "%s", OLMS2_ABOUT);
@@ -81,6 +85,7 @@ PF_Err GlobalSetup(PF_InData *in_data, PF_OutData *out_data) {
     out_data->out_flags2 = PF_OutFlag2_SUPPORTS_SMART_RENDER |
                            PF_OutFlag2_FLOAT_COLOR_AWARE |
                            PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
+    BuildLuts();  // binary builds both sRGB LUTs here (0x180001940)
     if (in_data->pica_basicP) {
         AEGP_SuiteHandler suites(in_data->pica_basicP);
         suites.UtilitySuite3()->AEGP_RegisterWithAEGP((AEGP_GlobalRefcon)0, OLMS2_NAME,
@@ -923,6 +928,13 @@ struct SearchResult {
     int type;
 };
 
+// Bounds-checked edge read: the binary guards every EndType byte lookup and
+// substitutes 0 outside the image.
+bool PresentIn(const EdgeDesc &e, int x, int y, int b) {
+    if (x < 0 || x >= e.w || y < 0 || y >= e.h) return false;
+    return e.Present(x, y, b);
+}
+
 // 0x18000D2F0: family A LEFT search on row y+1.
 SearchResult SearchD2F0(const EdgeDesc &e, int x, int y) {
     const int L = y + 1;
@@ -959,11 +971,13 @@ SearchResult SearchD8C0(const EdgeDesc &e, int x, int y) {
         }
     }
     const int ir = i - 1;
-    const int a1 = e.Present(ir, L, 1) ? 1 : 0;
-    const int a2 = e.Present(ir, L, 0) ? 1 : 0;
-    const int a3 = e.Present(ir, y, 0) ? 1 : 0;
-    const int a4 = e.Present(ir, L, 2) ? 1 : 0;
-    const int a5 = e.Present(ir - 1, L, 3) ? 1 : 0;
+    // Binary reads the EndType bytes at the STOP pixel (i, L)/(i, y) — one past
+    // the returned end — with a5 = b3(ir, L); OOB reads are 0.
+    const int a1 = PresentIn(e, i, L, 1) ? 1 : 0;
+    const int a2 = PresentIn(e, i, L, 0) ? 1 : 0;
+    const int a3 = PresentIn(e, i, y, 0) ? 1 : 0;
+    const int a4 = PresentIn(e, i, L, 2) ? 1 : 0;
+    const int a5 = PresentIn(e, ir, L, 3) ? 1 : 0;
     return {ir, y, EndType(a1, a2, a3, a4, a5)};
 }
 
@@ -1087,11 +1101,13 @@ SearchResult SearchDC90(const EdgeDesc &e, int x, int y) {
         }
     }
     const int ir = i - 1;
-    const int a1 = e.Present(ir, y, 1) ? 1 : 0;
-    const int a2 = e.Present(ir, y, 0) ? 1 : 0;
-    const int a3 = e.Present(ir, y - 1, 0) ? 1 : 0;
-    const int a4 = e.Present(ir, y, 2) ? 1 : 0;
-    const int a5 = e.Present(ir - 1, y, 3) ? 1 : 0;
+    // Binary reads the EndType bytes at the STOP pixel (i, y)/(i, y-1) — one
+    // past the returned end — with a5 = b3(ir, y); OOB reads are 0.
+    const int a1 = PresentIn(e, i, y, 1) ? 1 : 0;
+    const int a2 = PresentIn(e, i, y, 0) ? 1 : 0;
+    const int a3 = PresentIn(e, i, y - 1, 0) ? 1 : 0;
+    const int a4 = PresentIn(e, i, y, 2) ? 1 : 0;
+    const int a5 = PresentIn(e, ir, y, 3) ? 1 : 0;
     return {ir, y, EndType(a1, a2, a3, a4, a5)};
 }
 
@@ -1134,10 +1150,10 @@ StairPos StairSearch10C90(const EdgeDesc &e, int x, int y) {
 StairPos StairSearch10A90(const EdgeDesc &e, int x, int y) {
     const int sy = y + 1;
     if (sy >= e.h) return {x, y};
-    int limit = e.h - sy;
-    const int lim2 = e.w - x - 1;
-    if (limit > lim2) limit = lim2;
-    --limit;
+    // Binary: v9 = (h-sy <= w-x-1) ? h-sy : w-x; limit = v9 - 1.
+    int v9 = e.w - x;
+    if (e.h - sy <= v9 - 1) v9 = e.h - sy;
+    const int limit = v9 - 1;
     if (limit == 0 || !e.Present(x + 1, sy, 0)) return {x, y};
     int cx = x, cy = y;
     int walked = 0;
@@ -1205,27 +1221,30 @@ StairPos StairSearch10F00(const EdgeDesc &e, int x, int y) {
     return {cx, cy};
 }
 
-// 0x180010DE0: up-left stair walk (for 123A0).
+// 0x180010DE0: up-left stair walk (for 123A0). Binary state is (cur_x, cur_w)
+// with cur_w starting at y-1; the candidate is (cur_x-1, cur_w). Break restores
+// {cur_x, cur_w+1}; the b2-present / counter-exhausted paths return the full
+// step {X, Y} (the earlier port double-decremented y and returned {X, Y-1}).
 StairPos StairSearch10DE0(const EdgeDesc &e, int x, int y) {
     const int limit = (y < x) ? y : x;
     if (limit != 0 && !e.Present(x, y, 2) && !e.Present(x, y - 1, 2)) {
-        int cx = x, cy = y;
+        int cx = x;
+        int cw = y - 1;
         int walked = 0;
-        while (true) {
-            const int X = cx - 1, Y = cy - 1;
-            if (!e.Present(X, Y, 1) || !e.Present(X + 1, Y, 0)) break;
-            if (!e.Present(X, Y, 2)) {
-                const bool inb = (X >= 0 && X < e.w && Y - 1 >= 0 && Y - 1 < e.h);
-                if ((!inb || !e.Present(X, Y - 1, 2)) && ++walked < limit) {
+        for (;;) {
+            const int X = cx - 1;
+            const int Y = cw;
+            if (!PresentIn(e, X, Y, 1) || !PresentIn(e, X + 1, Y, 0))
+                return {cx, cw + 1};
+            if (!PresentIn(e, X, Y, 2)) {
+                if (!PresentIn(e, X, Y - 1, 2) && ++walked < limit) {
                     cx = X;
-                    cy = Y - 1;
+                    cw = Y - 1;
                     continue;
                 }
-                return {X, Y - 1};
             }
             return {X, Y};
         }
-        return {cx, cy};
     }
     return {x, y};
 }
@@ -1266,7 +1285,8 @@ StairPos StairSearch10B90(const EdgeDesc &e, int x, int y) {
 int ReclassE1A0(const EdgeDesc &e, const int *a) {  // A 1st (left end)
     const int S0 = a[0], S1 = a[1];
     if (S1 == 0) return 4;
-    return (e.Present(S0, S1, 1) ? 1 : 0) + 2 * (e.Present(S0 - 1, S1, 3) ? 1 : 0) +
+    // Binary reads byte -3 = b1 of (S0-1, S1) (0x18000E1EF: [rcx+r8-3]).
+    return (e.Present(S0, S1, 1) ? 1 : 0) + 2 * (e.Present(S0 - 1, S1, 1) ? 1 : 0) +
            4 * (e.Present(S0, S1 - 1, 0) ? 1 : 0);
 }
 
@@ -1287,30 +1307,35 @@ int ReclassE110(const EdgeDesc &e, const int *a) {  // B 1st (up end)
 int ReclassDED0(const EdgeDesc &e, const int *a) {  // B 2nd (down end)
     const int S3 = a[3], S4 = a[4];
     if (S3 == e.w - 1) return 4;
+    // Binary 1-term is b0 of (S3+1, S4) (0x18000DF30: [r10+rcx], r10 = row S4,
+    // col S3+1), not (S3, S4).
     return 2 * (e.Present(S3 + 1, S4 + 1, 0) ? 1 : 0) +
            4 * (e.Present(S3 + 1, S4 + 1, 1) ? 1 : 0) +
-           (e.Present(S3, S4, 0) ? 1 : 0);
+           (e.Present(S3 + 1, S4, 0) ? 1 : 0);
 }
 
 int ReclassE230(const EdgeDesc &e, const int *a) {  // C 1st (up end)
     const int S0 = a[0], S1 = a[1];
     if (S0 == 0) return 4;
+    // Binary 4-term reads byte -3 = b1 of (S0-1, S1) (0x18000E282).
     return (e.Present(S0, S1, 0) ? 1 : 0) + 2 * (e.Present(S0, S1 - 1, 0) ? 1 : 0) +
-           4 * (e.Present(S0 - 1, S1, 3) ? 1 : 0);
+           4 * (e.Present(S0 - 1, S1, 1) ? 1 : 0);
 }
 
 int ReclassDFF0(const EdgeDesc &e, const int *a) {  // C 2nd (down end)
     const int S3 = a[3], S4 = a[4];
     if (S3 == 0) return 4;
+    // Binary 4-term reads byte -3 = b1 of (S3-1, S4+1) (0x18000E04D).
     return 2 * (e.Present(S3, S4 + 1, 0) ? 1 : 0) + (e.Present(S3, S4, 0) ? 1 : 0) +
-           4 * (e.Present(S3 - 1, S4 + 1, 3) ? 1 : 0);
+           4 * (e.Present(S3 - 1, S4 + 1, 1) ? 1 : 0);
 }
 
 int ReclassE2C0(const EdgeDesc &e, const int *a) {  // D 1st (left end)
     const int S0 = a[0], S1 = a[1];
     if (S1 == e.h - 1) return 4;
+    // Binary 2-term reads byte -3 = b1 of (S0-1, S1+1) (0x18000E318).
     return 4 * (e.Present(S0, S1 + 1, 0) ? 1 : 0) + (e.Present(S0, S1 + 1, 1) ? 1 : 0) +
-           2 * (e.Present(S0 - 1, S1 + 1, 3) ? 1 : 0);
+           2 * (e.Present(S0 - 1, S1 + 1, 1) ? 1 : 0);
 }
 
 int ReclassE080(const EdgeDesc &e, const int *a) {  // D 2nd (right end)
@@ -1370,7 +1395,8 @@ bool ExtendedA1st(MlaaCtx &c, const EdgeDesc &e, const int *a) {  // 0x18000ED00
     const int t = ReclassE1A0(e, a);
     if (!(((t - 1) & 0xFFFFFFF9) == 0) || t == 5) return false;
     const SearchResult walked = SearchDC90(e, a[0], a[1]);
-    const float scale = (float)(a[3] - walked.x + 1) * (c.es * 0.2f + 0.5f) /
+    // Binary numerator (0x18000ED75-ED9A): walked.x - a[0] + 1.
+    const float scale = (float)(walked.x - a[0] + 1) * (c.es * 0.2f + 0.5f) /
                         (float)(a[3] - a[0] + 1);
     float h_in = 1.0f;
     if (t == 3 || t == 7) {
@@ -1551,54 +1577,93 @@ void DoubleLastWeight(MlaaCtx &c) {
     w = (w + w) * (w + w) * 0.5f;
 }
 
+// --- Binary helper layer ------------------------------------------------------
+// The binary funnels every family-dispatcher case through small gate helpers:
+//   Plain (F560/F420/F2E0/F1A0/F510/F3D0/F290/F150/F5B0/F330/F1F0/F600/F380/
+//          F240/F4C0/F470): reclass != 4 -> append(scale, h = 1.0)
+//   Split (F870/F6C0/F800/F650/F8E0/F730/F950/F7A0): reclass in {2,3,6,7} ->
+//          append(fifth scale, h = 1.0 for t in {2,6} else 0.5)
+// scale = es*0.5+0.5 (half) or es*0.2+0.5 (fifth); the appenders halve h.
+
+enum ReclassId { kE1A0, kDF60, kE110, kDED0, kE230, kDFF0, kE2C0, kE080 };
+enum AppendId { kE4F0, kE3E0, kE460, kE350 };
+
+int Reclass(ReclassId id, const EdgeDesc &e, const int *a) {
+    switch (id) {
+        case kE1A0: return ReclassE1A0(e, a);
+        case kDF60: return ReclassDF60(e, a);
+        case kE110: return ReclassE110(e, a);
+        case kDED0: return ReclassDED0(e, a);
+        case kE230: return ReclassE230(e, a);
+        case kDFF0: return ReclassDFF0(e, a);
+        case kE2C0: return ReclassE2C0(e, a);
+        default: return ReclassE080(e, a);
+    }
+}
+
+bool AppendVia(MlaaCtx &c, const int *a, AppendId id, float scale, float h) {
+    switch (id) {
+        case kE4F0: return AppendE4F0(c, a, scale, h);
+        case kE3E0: return AppendE3E0(c, a, scale, h);
+        case kE460: return AppendE460(c, a, scale, h);
+        default: return AppendE350(c, a, scale, h);
+    }
+}
+
+bool AppendPlain(MlaaCtx &c, const EdgeDesc &e, const int *a, ReclassId r, AppendId ap,
+                 bool fifth) {
+    if (Reclass(r, e, a) == 4) return false;
+    const float scale = fifth ? c.es * 0.2f + 0.5f : c.es * 0.5f + 0.5f;
+    return AppendVia(c, a, ap, scale, 1.0f);
+}
+
+bool AppendSplit(MlaaCtx &c, const EdgeDesc &e, const int *a, ReclassId r, AppendId ap) {
+    const int t = Reclass(r, e, a);
+    if (t != 2 && t != 3 && t != 6 && t != 7) return false;
+    const float h = (t == 2 || t == 6) ? 1.0f : 0.5f;
+    return AppendVia(c, a, ap, c.es * 0.2f + 0.5f, h);
+}
+
 // Family A (0x18000FCB0): selector ltype + 10*rtype - 2.
 void FamilyAAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
     const int sel = a[2] + 10 * a[5] - 2;
-    const float half_scale = c.es * 0.5f + 0.5f;
-    const float fifth_scale = c.es * 0.2f + 0.5f;
     switch (sel) {
         case 0: case 6: case 20: case 26: case 30: case 36: case 80: case 86:
-            if (ReclassE1A0(e, a) != 4) AppendE4F0(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kE1A0, kE4F0, false);  // F560
             return;
         case 1: case 7: case 27: case 31: case 37: case 51: case 57: case 87:
-            ExtendedA1st(c, e, a);
+            ExtendedA1st(c, e, a);  // ED00
             return;
-        case 4: case 24: case 34: case 54: case 84: {
-            const int t = ReclassE1A0(e, a);
-            if (t == 2 || t == 3 || t == 6 || t == 7) AppendE4F0(c, a, fifth_scale, 0.5f);
+        case 4: case 24: case 34: case 54: case 84:
+            AppendSplit(c, e, a, kE1A0, kE4F0);  // F870
             return;
-        }
         case 8: case 9: case 12: case 15: case 68: case 69: case 72: case 75:
-            if (ReclassDF60(e, a) != 4) AppendE3E0(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kDF60, kE3E0, false);  // F420
             return;
         case 10: case 16: case 70: case 76:
-            if (ReclassE1A0(e, a) != 4) {
-                if (AppendE4F0(c, a, fifth_scale, 1.0f)) DoubleLastWeight(c);
-            }
-            if (ReclassDF60(e, a) != 4) {
-                if (AppendE3E0(c, a, fifth_scale, 1.0f)) DoubleLastWeight(c);
-            }
+            if (AppendPlain(c, e, a, kE1A0, kE4F0, true)) DoubleLastWeight(c);   // F2E0
+            if (AppendPlain(c, e, a, kDF60, kE3E0, true)) DoubleLastWeight(c);   // F1A0
             return;
         case 11: case 71:
             ExtendedA1st(c, e, a);
-            if (ReclassDF60(e, a) != 4) AppendE3E0(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kDF60, kE3E0, true);  // F1A0
             return;
         case 13: case 73:
-            if (ReclassDF60(e, a) != 4) AppendE3E0(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kDF60, kE3E0, true);  // F1A0
             return;
         case 14: case 74:
-            if (ReclassE1A0(e, a) != 4) AppendE4F0(c, a, half_scale, 1.0f);
-            if (ReclassDF60(e, a) != 4) AppendE3E0(c, a, fifth_scale, 1.0f);
+            AppendSplit(c, e, a, kE1A0, kE4F0);        // F870
+            AppendPlain(c, e, a, kDF60, kE3E0, true);  // F1A0
             return;
         case 17: case 77:
             ExtendedA1st(c, e, a);
-            if (ReclassDF60(e, a) != 4) AppendE3E0(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kDF60, kE3E0, false);  // F420
             return;
         case 38: case 42: case 43: case 88: case 89: case 92: case 93: case 95:
-            ExtendedA2nd(c, e, a);
+            ExtendedA2nd(c, e, a);  // E700
             return;
         case 40: case 46:
-            if (ReclassE1A0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kE1A0, kE4F0, true);  // F2E0
             ExtendedA2nd(c, e, a);
             return;
         case 41: case 47: case 91: case 97:
@@ -1606,31 +1671,29 @@ void FamilyAAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
             ExtendedA2nd(c, e, a);
             return;
         case 44: case 94:
-            if (ReclassE1A0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kE1A0, kE4F0);  // F870
             ExtendedA2nd(c, e, a);
             return;
         case 50: case 56:
-            if (ReclassE1A0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kE1A0, kE4F0, true);  // F2E0
             return;
-        case 58: case 59: case 62: case 63: case 65: {
-            const int t = ReclassDF60(e, a);
-            if (t == 2 || t == 3 || t == 6 || t == 7) AppendE3E0(c, a, fifth_scale, 0.5f);
+        case 58: case 59: case 62: case 63: case 65:
+            AppendSplit(c, e, a, kDF60, kE3E0);  // F6C0
             return;
-        }
         case 60: case 66:
-            if (ReclassE1A0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 1.0f);
-            if (ReclassDF60(e, a) != 4) AppendE3E0(c, a, fifth_scale, 0.5f);
+            AppendPlain(c, e, a, kE1A0, kE4F0, true);  // F2E0
+            AppendSplit(c, e, a, kDF60, kE3E0);        // F6C0
             return;
         case 61: case 67:
             ExtendedA1st(c, e, a);
-            if (ReclassDF60(e, a) != 4) AppendE3E0(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kDF60, kE3E0);  // F6C0
             return;
         case 64:
-            if (ReclassE1A0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 0.5f);
-            if (ReclassDF60(e, a) != 4) AppendE3E0(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kE1A0, kE4F0);  // F870
+            AppendSplit(c, e, a, kDF60, kE3E0);  // F6C0
             return;
         case 90: case 96:
-            if (ReclassE1A0(e, a) != 4) AppendE4F0(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kE1A0, kE4F0, false);  // F560
             ExtendedA2nd(c, e, a);
             return;
         default:
@@ -1641,51 +1704,43 @@ void FamilyAAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
 // Family B (0x18000F9B0): selector ltype + 10*rtype - 2.
 void FamilyBAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
     const int sel = a[2] + 10 * a[5] - 2;
-    const float half_scale = c.es * 0.5f + 0.5f;
-    const float fifth_scale = c.es * 0.2f + 0.5f;
     switch (sel) {
         case 0: case 6: case 20: case 26: case 30: case 36: case 80: case 86:
-            if (ReclassE110(e, a) != 4) AppendE460(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kE110, kE460, false);  // F510
             return;
         case 1: case 7: case 27: case 31: case 37: case 51: case 57: case 87:
-            ExtendedB1st(c, e, a);
+            ExtendedB1st(c, e, a);  // EB90
             return;
-        case 4: case 24: case 34: case 54: case 84: {
-            const int t = ReclassE230(e, a);
-            if (t == 2 || t == 3 || t == 6 || t == 7) AppendE460(c, a, fifth_scale, 0.5f);
+        case 4: case 24: case 34: case 54: case 84:
+            AppendSplit(c, e, a, kE110, kE460);  // F800
             return;
-        }
         case 8: case 9: case 12: case 15: case 68: case 69: case 72: case 75:
-            if (ReclassDED0(e, a) != 4) AppendE350(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kDED0, kE350, false);  // F3D0
             return;
         case 10: case 16: case 70: case 76:
-            if (ReclassE110(e, a) != 4) {
-                if (AppendE460(c, a, fifth_scale, 1.0f)) DoubleLastWeight(c);
-            }
-            if (ReclassDED0(e, a) != 4) {
-                if (AppendE350(c, a, fifth_scale, 1.0f)) DoubleLastWeight(c);
-            }
+            if (AppendPlain(c, e, a, kE110, kE460, true)) DoubleLastWeight(c);  // F290
+            if (AppendPlain(c, e, a, kDED0, kE350, true)) DoubleLastWeight(c);  // F150
             return;
         case 11: case 71:
             ExtendedB1st(c, e, a);
-            if (ReclassDED0(e, a) != 4) AppendE350(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kDED0, kE350, true);  // F150
             return;
         case 13: case 73:
-            if (ReclassDED0(e, a) != 4) AppendE350(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kDED0, kE350, true);  // F150
             return;
         case 14: case 74:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, half_scale, 1.0f);
-            if (ReclassDED0(e, a) != 4) AppendE350(c, a, fifth_scale, 1.0f);
+            AppendSplit(c, e, a, kE110, kE460);        // F800
+            AppendPlain(c, e, a, kDED0, kE350, true);  // F150
             return;
         case 17: case 77:
             ExtendedB1st(c, e, a);
-            if (ReclassDED0(e, a) != 4) AppendE350(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kDED0, kE350, false);  // F3D0
             return;
         case 38: case 42: case 43: case 88: case 89: case 92: case 93: case 95:
-            ExtendedB2nd(c, e, a);
+            ExtendedB2nd(c, e, a);  // E570
             return;
         case 40: case 46:
-            if (ReclassE110(e, a) != 4) AppendE460(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kE110, kE460, true);  // F290
             ExtendedB2nd(c, e, a);
             return;
         case 41: case 47: case 91: case 97:
@@ -1693,31 +1748,29 @@ void FamilyBAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
             ExtendedB2nd(c, e, a);
             return;
         case 44: case 94:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kE110, kE460);  // F800
             ExtendedB2nd(c, e, a);
             return;
         case 50: case 56:
-            if (ReclassE110(e, a) != 4) AppendE460(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kE110, kE460, true);  // F290
             return;
-        case 58: case 59: case 62: case 63: case 65: {
-            const int t = ReclassDED0(e, a);
-            if (t == 2 || t == 3 || t == 6 || t == 7) AppendE350(c, a, fifth_scale, 0.5f);
+        case 58: case 59: case 62: case 63: case 65:
+            AppendSplit(c, e, a, kDED0, kE350);  // F650
             return;
-        }
         case 60: case 66:
-            if (ReclassE110(e, a) != 4) AppendE460(c, a, fifth_scale, 1.0f);
-            if (ReclassDED0(e, a) != 4) AppendE350(c, a, fifth_scale, 0.5f);
+            AppendPlain(c, e, a, kE110, kE460, true);  // F290
+            AppendSplit(c, e, a, kDED0, kE350);        // F650
             return;
         case 61: case 67:
             ExtendedB1st(c, e, a);
-            if (ReclassDED0(e, a) != 4) AppendE350(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kDED0, kE350);  // F650
             return;
         case 64:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, fifth_scale, 0.5f);
-            if (ReclassDED0(e, a) != 4) AppendE350(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kE110, kE460);  // F800
+            AppendSplit(c, e, a, kDED0, kE350);  // F650
             return;
         case 90: case 96:
-            if (ReclassE110(e, a) != 4) AppendE460(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kE110, kE460, false);  // F510
             ExtendedB2nd(c, e, a);
             return;
         default:
@@ -1726,53 +1779,47 @@ void FamilyBAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
 }
 
 // Family C (0x18000FFB0): selector ltype + 10*rtype - 1.
+// NOTE: the 2nd end is DFF0-gated and appends via E350 (down), not E080/E3E0
+// (that is family D's table) — helpers F470 (half) / F1F0 (fifth) / F730 (split).
 void FamilyCAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
     const int sel = a[2] - 1 + 10 * a[5];
-    const float half_scale = c.es * 0.5f + 0.5f;
-    const float fifth_scale = c.es * 0.2f + 0.5f;
     switch (sel) {
         case 0: case 6: case 10: case 16: case 40: case 46: case 70: case 76:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kE230, kE460, false);  // F5B0
             return;
         case 3: case 8: case 18: case 43: case 48: case 53: case 58: case 78:
-            ExtendedC1st(c, e, a);
+            ExtendedC1st(c, e, a);  // EE70
             return;
-        case 5: case 15: case 45: case 55: case 75: {
-            const int t = ReclassE230(e, a);
-            if (t == 2 || t == 3 || t == 6 || t == 7) AppendE460(c, a, fifth_scale, 0.5f);
+        case 5: case 15: case 45: case 55: case 75:
+            AppendSplit(c, e, a, kE230, kE460);  // F8E0
             return;
-        }
         case 19: case 21: case 22: case 27: case 79: case 81: case 82: case 87:
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kDFF0, kE350, false);  // F470
             return;
         case 20: case 26: case 80: case 86:
-            if (ReclassE230(e, a) != 4) {
-                if (AppendE460(c, a, fifth_scale, 1.0f)) DoubleLastWeight(c);
-            }
-            if (ReclassE080(e, a) != 4) {
-                if (AppendE3E0(c, a, fifth_scale, 1.0f)) DoubleLastWeight(c);
-            }
+            if (AppendPlain(c, e, a, kE230, kE460, true)) DoubleLastWeight(c);  // F330
+            if (AppendPlain(c, e, a, kDFF0, kE350, true)) DoubleLastWeight(c);  // F1F0
             return;
         case 23: case 83:
             ExtendedC1st(c, e, a);
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kDFF0, kE350, true);  // F1F0
             return;
         case 24: case 84:
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kDFF0, kE350, true);  // F1F0
             return;
         case 25: case 85:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, fifth_scale, 0.5f);
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, fifth_scale, 1.0f);
+            AppendSplit(c, e, a, kE230, kE460);        // F8E0
+            AppendPlain(c, e, a, kDFF0, kE350, true);  // F1F0
             return;
         case 28: case 88:
             ExtendedC1st(c, e, a);
-            if (ReclassDFF0(e, a) != 4) AppendE350(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kDFF0, kE350, false);  // F470
             return;
         case 29: case 32: case 34: case 89: case 91: case 92: case 94: case 97:
-            ExtendedC2nd(c, e, a);
+            ExtendedC2nd(c, e, a);  // E880
             return;
         case 30: case 36:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kE230, kE460, true);  // F330
             ExtendedC2nd(c, e, a);
             return;
         case 33: case 38: case 93: case 98:
@@ -1780,31 +1827,29 @@ void FamilyCAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
             ExtendedC2nd(c, e, a);
             return;
         case 35: case 95:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kE230, kE460);  // F8E0
             ExtendedC2nd(c, e, a);
             return;
         case 50: case 56:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kE230, kE460, true);  // F330
             return;
-        case 59: case 61: case 62: case 64: case 67: {
-            const int t = ReclassDFF0(e, a);
-            if (t == 2 || t == 3 || t == 6 || t == 7) AppendE350(c, a, fifth_scale, 0.5f);
+        case 59: case 61: case 62: case 64: case 67:
+            AppendSplit(c, e, a, kDFF0, kE350);  // F730
             return;
-        }
         case 60: case 66:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, fifth_scale, 1.0f);
-            if (ReclassDFF0(e, a) != 4) AppendE350(c, a, fifth_scale, 0.5f);
+            AppendPlain(c, e, a, kE230, kE460, true);  // F330
+            AppendSplit(c, e, a, kDFF0, kE350);        // F730
             return;
         case 63: case 68:
             ExtendedC1st(c, e, a);
-            if (ReclassDFF0(e, a) != 4) AppendE350(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kDFF0, kE350);  // F730
             return;
         case 65:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, fifth_scale, 0.5f);
-            if (ReclassDFF0(e, a) != 4) AppendE350(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kE230, kE460);  // F8E0
+            AppendSplit(c, e, a, kDFF0, kE350);  // F730
             return;
         case 90: case 96:
-            if (ReclassE230(e, a) != 4) AppendE460(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kE230, kE460, false);  // F5B0
             ExtendedC2nd(c, e, a);
             return;
         default:
@@ -1815,51 +1860,43 @@ void FamilyCAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
 // Family D (0x1800102A0): selector ltype + 10*rtype - 1.
 void FamilyDAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
     const int sel = a[2] - 1 + 10 * a[5];
-    const float half_scale = c.es * 0.5f + 0.5f;
-    const float fifth_scale = c.es * 0.2f + 0.5f;
     switch (sel) {
         case 0: case 6: case 10: case 16: case 40: case 46: case 70: case 76:
-            if (ReclassE2C0(e, a) != 4) AppendE4F0(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kE2C0, kE4F0, false);  // F600
             return;
         case 3: case 8: case 18: case 43: case 48: case 53: case 58: case 78:
-            ExtendedD1st(c, e, a);
+            ExtendedD1st(c, e, a);  // EFE0
             return;
-        case 5: case 15: case 45: case 55: case 75: {
-            const int t = ReclassE2C0(e, a);
-            if (t == 2 || t == 3 || t == 6 || t == 7) AppendE4F0(c, a, fifth_scale, 0.5f);
+        case 5: case 15: case 45: case 55: case 75:
+            AppendSplit(c, e, a, kE2C0, kE4F0);  // F950
             return;
-        }
         case 19: case 21: case 22: case 27: case 79: case 81: case 82: case 87:
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kE080, kE3E0, false);  // F4C0
             return;
         case 20: case 26: case 80: case 86:
-            if (ReclassE2C0(e, a) != 4) {
-                if (AppendE4F0(c, a, fifth_scale, 1.0f)) DoubleLastWeight(c);
-            }
-            if (ReclassE080(e, a) != 4) {
-                if (AppendE3E0(c, a, fifth_scale, 1.0f)) DoubleLastWeight(c);
-            }
+            if (AppendPlain(c, e, a, kE2C0, kE4F0, true)) DoubleLastWeight(c);  // F380
+            if (AppendPlain(c, e, a, kE080, kE3E0, true)) DoubleLastWeight(c);  // F240
             return;
         case 23: case 83:
             ExtendedD1st(c, e, a);
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kE080, kE3E0, true);  // F240
             return;
         case 24: case 84:
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kE080, kE3E0, true);  // F240
             return;
         case 25: case 85:
-            if (ReclassE2C0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 0.5f);
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, fifth_scale, 1.0f);
+            AppendSplit(c, e, a, kE2C0, kE4F0);        // F950
+            AppendPlain(c, e, a, kE080, kE3E0, true);  // F240
             return;
         case 28: case 88:
             ExtendedD1st(c, e, a);
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kE080, kE3E0, false);  // F4C0
             return;
         case 29: case 32: case 34: case 89: case 91: case 92: case 94: case 97:
-            ExtendedD2nd(c, e, a);
+            ExtendedD2nd(c, e, a);  // EA10
             return;
         case 30: case 36:
-            if (ReclassE2C0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kE2C0, kE4F0, true);  // F380
             ExtendedD2nd(c, e, a);
             return;
         case 33: case 38: case 93: case 98:
@@ -1867,31 +1904,29 @@ void FamilyDAppend(MlaaCtx &c, const EdgeDesc &e, const int *a) {
             ExtendedD2nd(c, e, a);
             return;
         case 35: case 95:
-            if (ReclassE2C0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kE2C0, kE4F0);  // F950
             ExtendedD2nd(c, e, a);
             return;
         case 50: case 56:
-            if (ReclassE2C0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 1.0f);
+            AppendPlain(c, e, a, kE2C0, kE4F0, true);  // F380
             return;
-        case 59: case 61: case 62: case 64: case 67: {
-            const int t = ReclassE080(e, a);
-            if (t == 2 || t == 3 || t == 6 || t == 7) AppendE3E0(c, a, fifth_scale, 0.5f);
+        case 59: case 61: case 62: case 64: case 67:
+            AppendSplit(c, e, a, kE080, kE3E0);  // F7A0
             return;
-        }
         case 60: case 66:
-            if (ReclassE2C0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 1.0f);
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, fifth_scale, 0.5f);
+            AppendPlain(c, e, a, kE2C0, kE4F0, true);  // F380
+            AppendSplit(c, e, a, kE080, kE3E0);        // F7A0
             return;
         case 63: case 68:
             ExtendedD1st(c, e, a);
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kE080, kE3E0);  // F7A0
             return;
         case 65:
-            if (ReclassE2C0(e, a) != 4) AppendE4F0(c, a, fifth_scale, 0.5f);
-            if (ReclassE080(e, a) != 4) AppendE3E0(c, a, fifth_scale, 0.5f);
+            AppendSplit(c, e, a, kE2C0, kE4F0);  // F950
+            AppendSplit(c, e, a, kE080, kE3E0);  // F7A0
             return;
         case 90: case 96:
-            if (ReclassE2C0(e, a) != 4) AppendE4F0(c, a, half_scale, 1.0f);
+            AppendPlain(c, e, a, kE2C0, kE4F0, false);  // F600
             ExtendedD2nd(c, e, a);
             return;
         default:
@@ -1986,7 +2021,9 @@ void RunGatedDownLeft(MlaaCtx &c, float s_scale) {  // 0x180012E60
     const SearchResult r2 = SearchCFA0(e, c.x, c.y);  // D190 is a CFA0 twin
     const int run2 = c.y - r2.y + 1;
     if (run1 < 4 || run2 < 4) {
-        if (run1 < 2 || run2 < 2 || !e.Present(c.x, c.y + 1, 2)) return;
+        // Binary 0x180012E60 appends when run1<2 || run2<2 || b2(x,y+1) ABSENT
+        // (the earlier port had this gate inverted, skipping every such corner).
+        if (run1 >= 2 && run2 >= 2 && e.Present(c.x, c.y + 1, 2)) return;
         const int mn = run1 < run2 ? run1 : run2;
         const float base = (mn == 3) ? 0.125f : 0.5f;
         const float k = base * (c.s * s_scale);
@@ -2004,7 +2041,8 @@ void RunGatedDownRight(MlaaCtx &c, float s_scale) {  // 0x180013020
     const SearchResult r2 = SearchD470(e, c.x, c.y);
     const int run2 = c.y - r2.y + 1;
     if (run1 < 4 || run2 < 4) {
-        if (run1 < 2 || run2 < 2 || !e.Present(c.x, c.y + 1, 3)) return;
+        // Binary 0x180013020 appends when run1<2 || run2<2 || b3(x,y+1) ABSENT.
+        if (run1 >= 2 && run2 >= 2 && e.Present(c.x, c.y + 1, 3)) return;
         const int m1 = run1 - 1, m2 = run2 - 1;
         const int mn = m1 < m2 ? m1 : m2;
         const float base = (mn == 2) ? 0.125f : 0.5f;
@@ -2023,7 +2061,8 @@ void RunGatedUpLeft(MlaaCtx &c, float s_scale) {  // 0x1800133B0
     const SearchResult r2 = SearchDB10(e, c.x, c.y);
     const int run2 = r2.y - c.y + 1;
     if (run1 < 4 || run2 < 4) {
-        if (run1 < 2 || run2 < 2 || !e.Present(c.x + 1, c.y, 2)) return;
+        // Binary 0x1800133B0 appends when run1<2 || run2<2 || b2(x+1,y) ABSENT.
+        if (run1 >= 2 && run2 >= 2 && e.Present(c.x + 1, c.y, 2)) return;
         const int m1 = run1 - 1, m2 = run2 - 1;
         const int mn = m1 < m2 ? m1 : m2;
         const float base = (mn == 2) ? 0.125f : 0.5f;
@@ -2042,7 +2081,8 @@ void RunGatedUpRight(MlaaCtx &c, float s_scale) {  // 0x180013200
     const SearchResult r2 = SearchD760(e, c.x, c.y);
     const int run2 = r2.y - c.y + 1;
     if (run1 < 4 || run2 < 4) {
-        if (run1 < 2 || run2 < 2 || !e.Present(c.x - 1, c.y, 3)) return;
+        // Binary 0x180013200 appends when run1<2 || run2<2 || b3(x-1,y) ABSENT.
+        if (run1 >= 2 && run2 >= 2 && e.Present(c.x - 1, c.y, 3)) return;
         const int mn = run1 < run2 ? run1 : run2;
         const float base = (mn == 3) ? 0.125f : 0.5f;
         const float k = base * (c.s * s_scale);
@@ -2235,7 +2275,9 @@ bool StairHandler11660(MlaaCtx &c, bool fallback_corner) {
             if (!keep_step) r1 = {cx, cy};
         }
     }
-    // Inline walk 2: up-right from (x, y).
+    // Inline walk 2: up-right from (x, y). The candidate is (cx+1, cy-1);
+    // every keep-step exit returns the candidate {X, Y} itself (the binary's
+    // keep register holds the candidate row), and continue advances to it.
     StairPos r2 = {c.x, c.y};
     {
         int limit = e.w - c.x - 1;
@@ -2253,12 +2295,12 @@ bool StairHandler11660(MlaaCtx &c, bool fallback_corner) {
                     break;
                 }
                 if (e.Present(X, Y - 1, 3) || ++walked >= limit) {
-                    r2 = {X, Y - 1};
+                    r2 = {X, Y};
                     keep_step = true;
                     break;
                 }
                 cx = X;
-                cy = Y - 1;
+                cy = Y;
             }
             if (!keep_step) r2 = {cx, cy};
         }
@@ -2375,12 +2417,12 @@ bool StairHandler11A60(MlaaCtx &c) {
                     break;
                 }
                 if (e.Present(X, Y - 1, 3) || ++walked >= limit) {
-                    r2 = {X, Y - 1};
+                    r2 = {X, Y};
                     keep_step = true;
                     break;
                 }
                 cx = X;
-                cy = Y - 1;
+                cy = Y;
             }
             if (!keep_step) r2 = {cx, cy};
         }
@@ -2413,7 +2455,9 @@ void MlaaDispatch(MlaaCtx &c) {
     const bool b2 = e.Present(x, y, 2);
     const bool b3 = e.Present(x, y, 3);
     const bool n4 = (x >= e.w - 1) || !e.Present(x + 1, y, 0);
-    bool n5 = false, n6 = true, n7 = true;
+    // Last row (y >= h-1): the binary skips the n5/n6/n7 block with n5=0, n6=0,
+    // n7=1 (asm 0x18000C486/0x18000C4EA), i.e. bits 32, 64 AND 128 all set.
+    bool n5 = false, n6 = false, n7 = false;
     if (y < e.h - 1) {
         n5 = (x >= 1) && e.Present(x - 1, y + 1, 3);
         n6 = e.Present(x, y + 1, 1);
@@ -2443,7 +2487,9 @@ void MlaaDispatch(MlaaCtx &c) {
             break;
         case 2: case 64: case 66: case 67: case 69: case 70: case 71:
         case 98: case 102: case 162: case 194: case 195: case 226:
+            // Binary 0x18000C5F2: FamilyB falls through into FamilyC.
             FamilyBMain(c);
+            FamilyCMain(c);
             break;
         case 3: case 131:
             StairHandler11E40(c, true);
@@ -2464,7 +2510,9 @@ void MlaaDispatch(MlaaCtx &c) {
             break;
         case 8: case 16: case 24: case 25: case 28: case 49: case 56: case 57:
         case 60: case 140: case 152: case 153: case 156:
+            // Binary 0x18000C889: FamilyD falls through into FamilyA (0x18000C893).
             FamilyDMain(c);
+            FamilyAMain(c);
             break;
         case 9: case 137:
             StairHandler123A0(c, true);
@@ -2527,9 +2575,9 @@ void MlaaDispatch(MlaaCtx &c) {
             }
             break;
         case 35: case 42: case 43: case 170: case 171:
+            // Binary 0x18000CA83: 113C0; FamilyC; Normalize (no FamilyB).
             StairHandler113C0(c);
             FamilyCMain(c);
-            FamilyBMain(c);
             NormalizeSamples(c);
             break;
         case 36:
