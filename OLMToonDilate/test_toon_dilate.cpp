@@ -186,6 +186,8 @@ void TestIdentity() {
     CHECK(h.params[1].u.fs_d.precision == 1 && h.params[1].flags == 0, "precision/flags");
     EffectMain(PF_Cmd_ABOUT, &h.in, &h.out, nullptr, nullptr, nullptr);
     CHECK(std::strcmp(h.out.return_msg, OLMTD_ABOUT) == 0, "about");
+    // Literal text from the Windows binary (ABOUT formats "%s %d.%d.%d\r%s" with 1,1,1).
+    CHECK(std::strcmp(h.out.return_msg, "OLM Toon Dilate 1.1.1\rToon Dilate Effect") == 0, "about literal");
 
     Fill(h, kAlmost);
     Put(h, 1, 1, kRed);

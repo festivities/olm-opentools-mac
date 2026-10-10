@@ -15,7 +15,7 @@
 #define OLMTD_NAME       "OLM Toon Dilate"
 #define OLMTD_CATEGORY   "OLM Plug-ins"
 #define OLMTD_MATCH_NAME "ADBE OLMToonDilate"
-#define OLMTD_ABOUT      "OLM Toon Dilate 1.1\rToon Dilate Effect"
+#define OLMTD_ABOUT      "OLM Toon Dilate 1.1.1\rToon Dilate Effect"
 
 #define OLMTD_MAJOR_VERSION 1
 #define OLMTD_MINOR_VERSION 1

@@ -656,8 +656,8 @@ bool verify_setup() {
                   (def.flags & PF_ParamFlag_SUPERVISE),
               "pos8 Gamma Correction dflt None SUPERVISE (id 7)");
     }
-    CHECK(CheckFloatSlider(host.added[9], "Gamma Value", 1.0, 4.8, 1.0, 4.8, 2.4, 2, 8),
-          "pos9 Gamma Value 1..4.8 dflt 2.4 prec 2 (id 8)");
+    CHECK(CheckFloatSlider(host.added[9], "Gamma Value", 1.0, 2.4, 1.0, 2.4, 2.4, 2, 8),
+          "pos9 Gamma Value 1..2.4 dflt 2.4 prec 2 (id 8)");
     {
         const PF_ParamDef &def = host.added[10];
         CHECK(def.uu.id == 9 && def.param_type == PF_Param_SLIDER &&

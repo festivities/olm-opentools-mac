@@ -11,7 +11,7 @@ per-plug-in sections below are verified reference (identity/PiPL, params, render
 math, quirks) — consult the one for the plug-in you are working on. Trust the
 decompile over prose; every load-bearing fact was re-verified in IDA.
 
-## Status (2026-10-08)
+## Status (2026-10-10)
 
 **All 9 plug-ins are ported and MinGW-tested on Windows. Remaining work = Mac
 compile + AE smoke test (see "Next steps").** User is testing one plug-in at a
@@ -19,15 +19,15 @@ time; build with `./build-all.sh` (below).
 
 | Plug-in (dir) | Windows source | Port state |
 |---|---|---|
-| OLMDirectionalBlur | `OLMDirectionalBlur.aex` 1.1.1 | ✅ **Confirmed in user Mac AE** (Alpha Fade works after clearing AE's cache) |
-| OLMRadialBlur | `OLMRadialBlur.aex` 1.3.0 | ✅ **Confirmed in user Mac AE** (after `d2355dd` PF_UpdateParamUI fix) |
-| OLMColorKey | `OLMColorKey.aex` 2.3.1 | ✅ **Confirmed in user Mac AE**; MinGW 1,052 checks |
+| OLMDirectionalBlur | `OLMDirectionalBlur.aex` 1.1.1 | ✅ Confirmed in user Mac AE (Alpha Fade); **2026-10-10 e2e fixes (row chunking, PI literal) need AE retest** |
+| OLMRadialBlur | `OLMRadialBlur.aex` 1.3.0 | ✅ Confirmed in user Mac AE (UI); **2026-10-10 render rework (rotation 1:1, samplers, noise/size) needs AE retest** |
+| OLMColorKey | `OLMColorKey.aex` 2.3.1 | ✅ Confirmed in user Mac AE; MinGW 1,056 checks + e2e vs real `.aex` (2026-10-10 blur/chamfer fixes need AE retest) |
 | OLMColorKeep | `ColorKeep.aex` 1.0.1 (no OLM prefix) | Source verified; MinGW 88 checks; ✅ **Confirmed in user Mac AE** |
 | OLMBlur | `OLMBlur.aex` 1.2.1 | MinGW 201 checks (incl. brute-force ref); ✅ **Confirmed in user Mac AE** |
 | OLMDistanceGradation | `DistanceGradation.aex` 0.8.2α | MinGW 104 checks; OpenCV reimplemented; ✅ **Confirmed in user Mac AE** |
-| OLMSmoother2AE | `OLMSmoother2.aex` 2.1.0 | MinGW 995 checks + bit-exact vs the Windows kernel on 36 differential runs; **Mac rebuild + AE retest pending** (no-smoothing-at-defaults bug fixed, see section) |
-| OLMToonDilate | `OLMToonDilate.aex` 1.1.1 | MinGW 44 checks; **Mac build/AE pending (user's next test target)** |
-| OLMKiraKira | `OLMKiraKira.aex` 3.3 | MinGW 61 checks; OpenCV reimplemented; ramp *editor* UI not ported; **Mac build/AE pending** |
+| OLMSmoother2AE | `OLMSmoother2.aex` 2.1.0 | MinGW 995 checks + **end-to-end bit-exact vs the real `.aex`** (4,333 runs, 8/16/32 bpc); **Mac rebuild + AE retest pending** |
+| OLMToonDilate | `OLMToonDilate.aex` 1.1.1 | MinGW 45 checks + end-to-end bit-exact vs the real `.aex` (3,360 runs); **Mac build/AE pending** |
+| OLMKiraKira | `OLMKiraKira.aex` 3.3 | MinGW 61 checks + end-to-end vs the real `.aex` (436 scenarios, ≤1 LSB / ≤1.2e-5 float); OpenCV reimplemented; ramp *editor* UI not ported; **Mac build/AE pending** |
 
 Port queue (user order, all done): OLMBlur → OLMDistanceGradation → OLMSmoother2AE
 → OLMToonDilate → OLMKiraKira. Read-only references in
@@ -139,7 +139,7 @@ FIX% 0–100 dflt 0 · 16 Noise Type POPUP **num_choices=2**, dephault 1, items
 `num_params` = 22 (written at PARAMS_SETUP).
 
 Checkout quirks (sub_180006C50): Angle & Offset use `(short)(fixed>>16)` integer degrees
-(angle → `(deg+90)/180*PI`, offset → `deg/36`); FIX% params `/100`; Noise Type popup value
+(angle → `(deg+90)/180*3.14159265` — the binary's literal is the truncated double `0x400921FB53C8D4F1` at `0x18000B360`, not full PI; offset → `deg/36`); FIX% params `/100`; Noise Type popup value
 sets internal mode: `noise_var==0 → 1 (off)`, else `popup==Layer → 2`, else `3 (generated)`;
 `smooth = (popup==1)`.
 
@@ -171,7 +171,10 @@ sub_180004A20=8-bit, sub_180003C90=16-bit, sub_1800057B0=32-bit; core sub_180003
 5. LUTs (`exp(-i²/(2(n/3)²+1e-5))`): front/back **blur** LUTs (length = Blur Strength) and
    front/back **fade** LUTs (length = Alpha Fade).
 6. Blur core per row (serial; the shipped Windows binary contains no OpenMP fork — only a
-   stray `omp_get_max_threads()` call):
+   stray `omp_get_max_threads()` call). **Row coverage quirk** (`0x1800054E6..542`, same in
+   all three kernels): `nchunks = min(H,32)`, `chunk = H/nchunks` (int), rows
+   `[k*chunk, (k+1)*chunk)` — canvas rows `>= nchunks*chunk` are NEVER blurred. Visible on
+   layers whose canvas height > 32 and not a multiple of the chunk count. Port replicates it:
    - size pass: `w = pow(area/maxlevel, Size Variation)`; windowed alpha average
      `v71 = (a + Σ LUTfade[k/w]·a(x±k)) / (1 + Σ LUTfade[k/w])`, forward reach
      `(int)(front_fade·w)` clamped to `W-x`, backward to `x`, taps `k=1..reach-1` reading
@@ -294,8 +297,30 @@ Decompiled from `.opencode/olm-opentools-windows/OLMRadialBlur/OLMRadialBlur.aex
   SIMD rcp/Newton path skipped (~1 ulp).
 - Noise layer luma (type 3): premultiplied `R·A·0.299 + G·A·0.587 + B·A·0.114`
   (channel premul in float, weighted sum in double), aligned by world origins.
-- **Deviations**: serial loops (original chunks are serial too), std::vector
-  instead of PF handles, negative noise-table wrap, scalar LUT path.
+- **Deviations**: serial loops (binary is OpenMP per-angle chunks; output
+  identical), std::vector instead of PF handles, negative noise-table wrap,
+  scalar LUT path, host libm (see e2e below), binary UB reads (ring 0 / last
+  ring in rotation fades) read as 0.
+- **E2E (2026-10-10)** `%TEMP%\opencode\olm-e2e\radialblur\e2e_radialblur.cpp`
+  (+ stage probes ORB_CORE/ORB_SAMP/ORB_ROT, `run_all.sh`). Fixed: param
+  flags/ui_flags per helper (popup/checkbox/layer 0x62, point/angle 0x60,
+  float slider SUPERVISE, int slider flags 1 + ui DONT_ERASE_TOPIC);
+  Brightness Gain valid 0–10 / slider 0–2; repeat samplers `0x1800095F0`
+  (clamp all taps; alpha = sum) and `0x180009A20` (taps 2/4 read x1+1);
+  inverse polar bilinear `0x180009100` tap order + reciprocal; fade reach
+  uses size factor (+72), scatter uses size·noise (+64); noise/size `*0.01f`,
+  `inv_cell = (float)(1/(double)cell)`, quality step `(float)(1/(double)q)`;
+  ROTATION re-transcribed 1:1 from `0x1800046B0` (fade `0x180002780` with its
+  ring-wrap index quirks, scatter `0x1800024C0`/`0x180001C90`). Zoom scatter
+  taps `k=1..R-1`, `R=min(trunc(s·f), limit)`, skip `R<=1` (disasm
+  `0x180009EC4..A16C`). Control: the port with the binary's own
+  sincosf/cosf/sinf/atan2f/expf + LUT builder substituted (`mut/gen_tr2.sed`)
+  matches 207/207 runs (one 5×5 rotation case is nondeterministic — binary
+  UB). The real port's residue is libm only: 8 bpc ≤1 LSB in most groups,
+  but zoom inner-strength cases reach 250 on ~100 bytes (a ulp flips a
+  polar cell). U1 (Noise Type=Layer: binary writes through an uninitialised
+  scratch pointer, crashes in the harness) and U2 (16 bpc output>input OOB)
+  are port-only.
 - Test: `OLMRadialBlur/test_radial_blur.cpp` (fake host, real EffectMain;
   31-param setup check, UPDATE_PARAMS_UI callback checks for all six controls
   enabled and disabled, default pass-through, Zoom/Rotation deltas, repeat
@@ -344,8 +369,9 @@ No .ps1 execution or package installation. Reference directory remains read-only
   three component Thresholds. Defaults: Count1, key/replace colors black,
   Use Color true, all thresholds0, Thin/Blur0, RGB, Full precision, Around blur.
   Thin valid -4000..4000 / slider -100..100; Blur valid0..4000 / slider0..100;
-  Count valid0..25 / slider0..30 (quirk). Port rejects invalid counts before
-  indexing fixed arrays, even if a permissive host would serve extra checkouts.
+  Count valid0..25 / slider0..30 (quirk). Binary (`0x18000A370`) accepts
+  negative counts (loop `count > 0` → no colours, no error); only >25 fails
+  (via the nonexistent slot checkout). Port matches: rejects only >25.
 - UI `0x180001A50`: disables global Threshold when either threshold mode is on;
   global component sliders visible only Per Component && !Per Color.
   Color and Use Color visible for all active slots. Scalar slot thresholds
@@ -381,7 +407,9 @@ No .ps1 execution or package installation. Reference directory remains read-only
   extent-limited keying, inner-boundary mask (8 neighbors; out-of-bounds ignored),
   distance map, thin, canvas copy, optional blur, final keep inversion.
 - Box and Approximate chamfers cap at4000 (initial no-site value3999);
-  preserve binary's backward-pass min(down,right)+wy quirk. Box considers
+  preserve binary's backward-pass min(down,right)+wy quirk, and the `+wx`
+  term uses the CARRIED candidate of the right neighbour (pre-min `v28`/`v22`
+  in `0x180006E20`/`0x180005D60`), not its stored value. Box considers
   diagonal neighbors with vertical weight; Approximate uses axis steps.
   Euclidean uses separable O(WH) FH squared-distance transform
   `0x18000A710/A920` with denX/denY SQUARED in the parabola cost, then sqrt;
@@ -389,7 +417,9 @@ No .ps1 execution or package installation. Reference directory remains read-only
   PF handles; canvas worlds retain SDK allocation/disposal and native precision.
 - Thin<0 erodes if -amount>distance; Thin>0 restores full ORIGINAL source
   pixel when amount>=distance (not nearest-edge color). Blur changes only alpha
-  via Inside/Around/Outside sine profiles; if keyed alpha0 and profile nonzero,
+  via Inside/Around/Outside sine profiles (Inside/Outside: double `sin(
+  (float)(d*step) - 1.57079632679485)` then `+1`, `*0.5f`; Around: `sinf`);
+  if keyed alpha0 and profile nonzero,
   use source alpha for the multiplication. Around gives half alpha at distance0.
   Integer output truncates; no extra RGB clamps or premultiplication.
 - Safety deviations: reject invalid counts; one-dimensional Box canvases use
@@ -401,7 +431,11 @@ No .ps1 execution or package installation. Reference directory remains read-only
 `OLMColorKey/test_color_key.cpp` runs production EffectMain with fake AE suites,
 including UI/stream records, native-depth worlds, iterators and color parameters.
 Main agent independently compiled with MinGW C++17 (-Wall -Wextra, SDK-only
-warnings suppressed) and ran it: **1,052 checks pass**. Covers 224 identities,
+warnings suppressed) and ran it: **1,056 checks pass** (2026-10-10).
+E2E harness `%TEMP%\opencode\olm-e2e\colorkey\e2e_colorkey.cpp`: real `.aex`
+vs port, one fake host; 223/223 defs, 168/168 UI states, 18 PreRender, 5,448
+renders. Residual: width-1 Box inputs (binary reads OOB, nondeterministic
+run-to-run), invalid popup enums, 1-ulp libm differences. Covers 224 identities,
 all UI mode combinations/definition preservation, key/keep/replace, six spaces,
 threshold/precision/premultiplied modes, distance and edge profiles, downsampling,
 padded rows, partial extents, degenerate dimensions and injected-failure cleanup.
@@ -411,10 +445,16 @@ the Mac bundle in AE and reports it working.
 
 ## Known deliberate deviations from the DirectionalBlur binary
 
-1. Noise field table index: original underflows for negative Offset (OOB table read); the
-   port wraps negatives (`t += 100`) instead.
-2. Rows are processed serially in one loop (identical output; only the original's chunking is
-   cosmetic).
+1. Noise field table index: original underflows for negative Offset (OOB table read, only
+   for cells where `rand*100 + offset < 0`); the port wraps negatives (`t += 100`) instead.
+   This is the ONLY remaining e2e difference (harness param set P30).
+2. Rows are processed serially in one loop, but over the binary's chunked row range (see
+   render step 6 — the chunking is NOT cosmetic: it drops trailing rows).
+
+E2E harness (2026-10-10) `%TEMP%\opencode\olm-e2e\dirblur\e2e_dirblur.cpp`: real `.aex`
+`entryPointFunc` vs port `EffectMain`, one fake host; 12,384 runs (43 param sets × 12
+geometries × 8 images × 3 depths), 0 differing bytes except P30 (deviation 1). Also fixed
+then: group-end defs carry names ("Sharp Tail" ×2, "Thickness") like the binary.
 3. Memory: canvases/planes are allocated like the original (≈66 bytes per canvas pixel,
    canvas ≈ (W+H)²), i.e. hundreds of MB for 4K layers. Same as Windows.
 
@@ -730,7 +770,7 @@ param indexing was and is correct.
 Verification: a differential harness loads the real `.aex`, calls its 8-bit
 kernel `0x180003EB0` directly with a hand-built ctx (LUTs built by the
 binary's own `0x18000A8E0/A740`), and diffs the output against the port on the
-same input. **0 differing pixels on 6 images × 6 param combos** (hard/AA
+same input (kernel-only; superseded by the end-to-end harness below). **0 differing pixels on 6 images × 6 param combos** (hard/AA
 diagonals, uniform noise, blobs, bars, 3-level noise; v1/v2, smoothness 25–100,
 extra 0–100, range 0–10). Harness + probes live in `%TEMP%\opencode`
 (`diff_kernel.cpp`, `smoother2_probe.cpp`, `fam_probe.cpp`); TEMP copies of the
@@ -744,7 +784,7 @@ reference stay out of the repo.
   (id 2); 3 Invert Color Key (id 15); 4 Smoothness 0–100 dflt 100 (id 3);
   5 Extra Smooth 0–100 dflt 0 (id 4); 6 Smooth Range 0–100 dflt 2 (id 5);
   7 Version `v1|v2` dflt 2 (id 6); 8 Gamma `None|Gamma Colors|All Colors`
-  dflt 1 SUPERVISE (id 7); 9 Gamma Value 1–4.8 dflt 2.4 prec 2 (id 8);
+  dflt 1 SUPERVISE (id 7); 9 Gamma Value 1–2.4 (valid AND slider; `sub_180006B60` copies one pair into both) dflt 2.4 prec 2 (id 8);
   10 Number of Gamma Colors 0–5 dflt 1 SUPERVISE (id 9); 11–15 Gamma Color
   black (ids 10–14). num_params 16. USER_CHANGED_PARAM is a no-op.
 - **UI**: disable Color Key + Invert when Enable is off; disable Gamma Value
@@ -762,6 +802,14 @@ reference stay out of the repo.
   after unpremultiply. Writers round half-up (`(int)(v*scale+0.5)`), not
   truncate. Serial loops (binary is OpenMP). Sample list stops at 12 instead
   of throwing. Dirty-rect shrink is dead on the live path (flag never set).
+- **E2E harness (2026-10-10)** `%TEMP%\opencode\olm-e2e\smoother\e2e_smoother.cpp`
+  drives the real `.aex` `entry_point` and the port's `EffectMain` through one
+  fake host (GLOBAL_SETUP → PARAMS_SETUP → UPDATE_PARAMS_UI → PRE/SMART_RENDER):
+  4,333 runs, 0 differing bytes at 8/16/32 bpc. Fixes it found: sRGB LUT grid
+  is a FLOAT divide `(float)i/9999.0f` (`0x18000A8E0/A740`; 16/32 bpc were
+  off by ~1 LSB); Gamma Value range 1–2.4; kernels throw (swallowed → copy
+  only) when output size ≠ input size; final clamp keeps NaN (`0x18000B1E0`).
+  At 8 bpc defaults the port was already bit-exact before these fixes.
 - **Test** `OLMSmoother2AE/test_smoother2.cpp`: 995 checks. Main agent
   recompiled and reran it (pass). The smoothing scenarios now assert the
   run-gated corner blend (wsum 0.5 from the 0.4/0.2/0.4 split at 0.5 base,
@@ -777,8 +825,10 @@ the effect). Entry `entry_point` `0x1801ABCA0`. PiPL at file `0x3BA4BA`
 
 - **Identity**: Name `OLM Toon Dilate`, Match **`ADBE OLMToonDilate`** (not
   `OLM …`), category `OLM Plug-ins`, version 559104 (1.1.1). About is
-  `OLM Toon Dilate 1.1\rToon Dilate Effect` (format string is `%s %d.%d\r%s`;
-  the third version digit is passed but not printed). Flags `0x02000044` /
+  `OLM Toon Dilate 1.1.1\rToon Dilate Effect` (ABOUT `0x1801ABBF0` uses
+  `%s %d.%d.%d\r%s` at `0x180311D58`; the 2-digit string is dead).
+  SMART_RENDER_GPU (31) routes to the same CPU render in the binary (port
+  matches; unreachable since no GPU flag). Flags `0x02000044` /
   `0x08021400`. No SEND_UPDATE_PARAMS_UI — UPDATE_PARAMS_UI and
   USER_CHANGED_PARAM are nullsubs. Legacy RENDER is `return 0`.
 - **Params**: input + Search Radius float slider, position == id 1, default
@@ -794,7 +844,10 @@ the effect). Entry `entry_point` `0x1801ABCA0`. PiPL at file `0x3BA4BA`
   strictly smaller distance. Color is a raw 4-channel copy from the winning
   neighbor in the **output** world, gated by `(float)d <= radius`. No
   OpenCV algorithm calls — `cv::Mat` only wraps the mask buffer.
-- **Test** `OLMToonDilate/test_toon_dilate.cpp`: 44 checks, 0 failures.
+- **Test** `OLMToonDilate/test_toon_dilate.cpp`: 45 checks, 0 failures.
+  E2E harness `%TEMP%\opencode\olm-e2e\toondilate\e2e_toondilate.cpp`
+  (2026-10-10): real `.aex` vs port in one fake host, 3,360 runs (radii,
+  downsample, padded/offset/larger/smaller worlds), 0 differing bytes.
   Build: `cmake -S OLMToonDilate -B build-toondilate`.
 
 ## OLM Kira Kira — verified facts (2026-10-07)
@@ -813,7 +866,7 @@ backward pass, and the merge early-out in IDA (instance `7e249916d6bc`).
   the ramp *editor* drawing is not ported (see below). Legacy RENDER is a
   stub; smart-render only. No RNG — fully deterministic.
 - **Params** (41; position ≠ uu.id): Channel popup id 8 (6 choices, items
-  `Alpha|Luminance|RGB|Brightness`, default 1, SUPERVISE); Blur Mode popup id
+  `Alpha|Luminance|RGB|Brightness`, default 1, SUPERVISE; values 5/6 render as RGB); Blur Mode popup id
   9 (3 choices, items `Box|Approximated Gaussian|Gaussian|Exponential`,
   default 2, SUPERVISE); Merge mode popup id 17 (2 choices
   `premultiply|add`, default 1, SUPERVISE|USE_VALUE_FOR_OLD_PROJECTS);
@@ -824,7 +877,7 @@ backward pass, and the merge early-out in IDA (instance `7e249916d6bc`).
   Horizontal/Diagonal/Diagonal2 Length ids 3/4/5/26 (valid 0–1000, slider
   0–200, dflt 50) each with a Color (ids 13/14/15/28) + a `Use Ramp` checkbox
   (ids 18/20/22/35) + `Ramp` arbitrary-data (ids 19/21/23/36) inside a group;
-  Highlight Radius id 6 (valid 0–8000, slider 0–200, dflt 0) + Highlight
+  Highlight Radius id 6 (valid 0–500, slider 0–200, dflt 0) + Highlight
   Color id 16 + Use Ramp id 24 + Ramp id 25; Glow Rotation angle id 1.
 - **UPDATE_PARAMS_UI**: for each of 5 (UseRamp, Color, Ramp) triples, disable
   Color when Use Ramp is on and disable Ramp when off. Copies the live host
@@ -847,12 +900,16 @@ backward pass, and the merge early-out in IDA (instance `7e249916d6bc`).
   clamped >=0.001 except Color mode): Channel=pow(A,g); Luminance=f(.2126R+
   .7152G+.0722B)*A; Brightness=f(max(R,G,B))*A; Color=4ch pow(C,g+1)*A.
   5 arms at angles rot+{90,0,45,135} (deg) + highlight (angle 0): rotate mask
-  into a padded canvas (warpAffine, in-place in binary → ported with a
-  scratch), 1D horizontal blur, rotate back, crop center. Blur modes: 1 box
+  into a padded canvas (warpAffine(getRotationMatrix2D(+deg)) — OpenCV
+  INVERTS M, so the port's forward-sampling Warp gets −deg; coordinates use
+  OpenCV's 1/1024 fixed point → 1/32-px taps), 1D horizontal blur, rotate back, crop center. Blur modes: 1 box
   1×k; 2 box ×3 (vol k³); 3 Gaussian ksize (4k+1)×1 σ=k/2; 4 hand-rolled IIR
-  α=k/(k+1), β=k/(k+1)² — **binary runs in place so the backward pass reads
-  the forward result (second-order); the port replicates that**. Highlight is
-  a square (2k+1)² blur (box/gauss/×3). boxFilter normalize = !Color. Compose
+  α=k/(k+1), β=k/(k+1)² — the backward pass reads the ORIGINAL source
+  (symmetric response, 0 at the centre; e2e impulse-verified — the earlier
+  "in-place second-order" claim was wrong). Highlight is a square (2k+1)²
+  blur (box/gauss/×3); modes 2/4 normalised per pass, volume n² (e2e fit).
+  Approximated Input resize replicates edges (cv::resize), unlike warp
+  (zero border). boxFilter normalize = !Color. Compose
   accumulates per-direction (skip if <=0.001): shared modes weight by
   clamp01(v*gain) and pick ramp or static RGB, alpha-union then un-premultiply;
   Color mode divides by the blur volume and takes the source hue. Final
@@ -864,6 +921,10 @@ backward pass, and the merge early-out in IDA (instance `7e249916d6bc`).
 - **OpenCV reimplemented, not linked**: resize (INTER_LINEAR), warpAffine +
   getRotationMatrix2D, boxFilter (BORDER_REFLECT_101), GaussianBlur, the
   ARGB→RGBA shuffle. cv::Mat was only a buffer wrapper.
+- **E2E harness** `%TEMP%\opencode\olm-e2e\kirakira\e2e_kirakira.cpp` (2026-10-10):
+  real `.aex` vs port in one fake host; 436 scenarios pass. Mirrored arms,
+  IIR, highlight normalisation, resize edges, channel 5/6 and HL range were
+  found this way (from output experiments, not all localised in IDA).
 - **Test** `OLMKiraKira/test_kira_kira.cpp`: 61 checks, 0 failures
   (identities, zero-length copy, 4 channel modes, 4 blur modes, highlight
   glow, merge add + invalid-merge no-write, half-res/downsample, ramp flatten

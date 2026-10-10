@@ -21,7 +21,7 @@
 namespace {
 
 constexpr float kPiF = 3.1415927f;            // binary blur-profile constant
-constexpr float kHalfPi = 1.57079632679485f;  // binary blur-profile constant
+constexpr double kHalfPiD = 1.57079632679485;  // binary blur-profile double (qword_18001F6D0)
 constexpr float kAroundStep = 1.5707964f;     // binary Around-profile constant
 constexpr float kClampDistance = 4000.0f;     // chamfer clamp (dword_18001F754)
 constexpr float kLab76ShiftA = 133.037f;
@@ -264,10 +264,11 @@ PF_Err CheckoutParams(PF_InData *in_data, PF_OutData *out_data, A_long bitdepth,
     OLMCK_READ(OLMCK_FORCE_PRECISION, p->force_precision = def.u.pd.value);
     OLMCK_READ(OLMCK_ENABLE_REPLACE, p->enable_replace = def.u.bd.value != 0);
 
-    // Explicit rejection before the slot loop: with a count outside 0..25 the
-    // slot parameters do not exist, and checking them out (even if a host
-    // permitted it) would run past the arrays.
-    if (p->count < 0 || p->count > OLMCK_MAX_COLORS) return PF_Err_BAD_CALLBACK_PARAM;
+    // Explicit rejection before the slot loop: with a count above 25 the slot
+    // parameters do not exist, and checking them out (even if a host permitted
+    // it) would run past the arrays. Negative counts are not rejected: the binary
+    // (0x18000A370 loops only while count > 0) renders them with no colours (e2e).
+    if (p->count > OLMCK_MAX_COLORS) return PF_Err_BAD_CALLBACK_PARAM;
 
     // The binary checks out every enabled slot; with count > 25 the slot
     // parameters do not exist and checkout fails, rejecting the render
@@ -1113,6 +1114,9 @@ void BoxChamfer(PF_EffectWorld &mask, PF_EffectWorld &dist, A_long width, A_long
     }
     for (A_long y = height - 2; y >= 0; --y) {
         A_long x = width - 1;
+        // The binary (0x180006E20 v28) carries each pixel's candidate, before its min with the
+        // stored value, into the "+ wx" term of its left neighbour; the "min" terms read stored values.
+        float carried = 0.0f;
         {
             float v = big;
             if (width > 1) {
@@ -1121,6 +1125,7 @@ void BoxChamfer(PF_EffectWorld &mask, PF_EffectWorld &dist, A_long width, A_long
                 v = std::min(down, down_left) + wy;
                 if (clamp_value < v) v = clamp_value;
             }
+            carried = v;
             float *p = FloatPixel(dist, x, y);
             SetFloatAll(p, std::min(p[0], v));
             --x;
@@ -1132,8 +1137,9 @@ void BoxChamfer(PF_EffectWorld &mask, PF_EffectWorld &dist, A_long width, A_long
             const float right = *FloatPixel(dist, x + 1, y);
             const float m = std::min(std::min(down_right, down_left),
                                      std::min(down, right)) + wy;
-            float v = std::min(m, right + wx);
+            float v = std::min(m, carried + wx);
             if (clamp_value < v) v = clamp_value;
+            carried = v;
             float *p = FloatPixel(dist, x, y);
             SetFloatAll(p, std::min(p[0], v));
         }
@@ -1142,7 +1148,7 @@ void BoxChamfer(PF_EffectWorld &mask, PF_EffectWorld &dist, A_long width, A_long
             const float down_right = width > 1 ? *FloatPixel(dist, 1, y + 1) : down;
             const float right = width > 1 ? *FloatPixel(dist, 1, y) : 0.0f;
             const float m = std::min(std::min(down_right, down), right) + wy;
-            float v = std::min(m, right + wx);
+            float v = std::min(m, carried + wx);
             if (clamp_value < v) v = clamp_value;
             float *p = FloatPixel(dist, 0, y);
             SetFloatAll(p, std::min(p[0], v));
@@ -1188,12 +1194,16 @@ void ApproxChamfer(PF_EffectWorld &mask, PF_EffectWorld &dist, A_long width, A_l
     }
     for (A_long y = height - 2; y >= 0; --y) {
         A_long x = width - 1;
+        // Binary (0x180005D60 v22): the "+ wx" term takes the carried candidate of the right
+        // neighbour (before its min with the stored value); the "min" terms read stored values.
+        float carried = 0.0f;
         {
             float v = big;
             if (height > 1) {
                 const float down = *FloatPixel(dist, x, y + 1);
                 v = std::min(down + wy, clamp_value);
             }
+            carried = v;
             float *p = FloatPixel(dist, x, y);
             SetFloatAll(p, std::min(p[0], v));
             --x;
@@ -1201,8 +1211,9 @@ void ApproxChamfer(PF_EffectWorld &mask, PF_EffectWorld &dist, A_long width, A_l
         for (; x >= 0; --x) {
             const float down = *FloatPixel(dist, x, y + 1);
             const float right = *FloatPixel(dist, x + 1, y);
-            float v = std::min(std::min(down, right) + wy, right + wx);
+            float v = std::min(std::min(down, right) + wy, carried + wx);
             if (clamp_value < v) v = clamp_value;
+            carried = v;
             float *p = FloatPixel(dist, x, y);
             SetFloatAll(p, std::min(p[0], v));
         }
@@ -1221,7 +1232,8 @@ void ProfileInside(float amount, PF_EffectWorld &keyed, PF_EffectWorld &dist,
             const float d = *FloatPixel(dist, x, y);
             float w;
             if (alpha != 0) {
-                w = d >= amount ? 1.0f : (sinf(d * step - kHalfPi) + 1.0f) * 0.5f;
+                // Inside/Outside evaluate sin in double (binary: cvtps2pd, subsd, call sin, addsd, cvtsd2ss).
+                w = d >= amount ? 1.0f : (float)(std::sin((double)(d * step) - kHalfPiD) + 1.0) * 0.5f;
             } else {
                 w = 0.0f;
             }
@@ -1269,7 +1281,7 @@ void ProfileOutside(float amount, PF_EffectWorld &keyed, PF_EffectWorld &dist,
             } else if (d >= amount) {
                 w = 0.0f;
             } else {
-                w = (sinf(kHalfPi - d * step) + 1.0f) * 0.5f;
+                w = (float)(std::sin(kHalfPiD - (double)(d * step)) + 1.0) * 0.5f;
             }
             row[x] = w;
         }

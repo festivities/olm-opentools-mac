@@ -450,7 +450,8 @@ PF_Err checkout_params(PF_InData *in_data, OLMDBParams *p) {
     AEFX_CLR_STRUCT(cur);
     ERR(PF_CHECKOUT_PARAM(in_data, OLMDB_ANGLE, in_data->current_time, in_data->time_step,
                           in_data->time_scale, &cur));
-    p->angle_rad = (fixed_short(cur.u.ad.value) + 90.0) / 180.0 * 3.14159265358979323846;
+    // Binary's PI literal is the double 3.14159265 (0x400921FB53C8D4F1), not full precision.
+    p->angle_rad = (fixed_short(cur.u.ad.value) + 90.0) / 180.0 * 3.14159265;
     ERR(PF_CHECKIN_PARAM(in_data, &cur));
 
     AEFX_CLR_STRUCT(cur);
@@ -760,9 +761,13 @@ PF_Err render_format(PF_InData *in_data, PF_OutData *out_data, PF_EffectWorld *i
             if (p.back_fade > 0) build_lut(ctx.lut_back_fade, p.back_fade);
         }
 
-        // 7. blur core (serial rows; see blur_row()).
-        if (!err) {
-            for (int y = 0; y < ctx.H; ++y)
+        // 7. blur core. The Windows kernel splits the canvas into min(H,32) row chunks of
+        //    H/min(H,32) rows (integer division) and blurs only those rows, so rows past
+        //    that are never blurred (visible on small layers with H > 32 and H % 32 != 0).
+        if (!err && ctx.H > 0) {
+            const int nchunks = ctx.H < 32 ? ctx.H : 32;
+            const int chunk = ctx.H / nchunks;
+            for (int y = 0; y < nchunks * chunk; ++y)
                 blur_row(ctx, y);
         }
 
@@ -858,6 +863,7 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data, PF_ParamDef *params
     PF_ADD_FIXED("Sharp Tail", 0, 100, 0, 100, 0, 1, PF_ValueDisplayFlag_PERCENT, 0, OLMDB_FRONT_TAIL);
 
     AEFX_CLR_STRUCT(def);
+    PF_STRNNCPY(def.PF_DEF_NAME, "Sharp Tail", sizeof(def.PF_DEF_NAME));  // binary names group ends
     PF_END_TOPIC(OLMDB_FRONT_END);
 
     AEFX_CLR_STRUCT(def);
@@ -873,6 +879,7 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data, PF_ParamDef *params
     PF_ADD_FIXED("Sharp Tail", 0, 100, 0, 100, 0, 1, PF_ValueDisplayFlag_PERCENT, 0, OLMDB_BACK_TAIL);
 
     AEFX_CLR_STRUCT(def);
+    PF_STRNNCPY(def.PF_DEF_NAME, "Sharp Tail", sizeof(def.PF_DEF_NAME));  // binary names group ends
     PF_END_TOPIC(OLMDB_BACK_END);
 
     AEFX_CLR_STRUCT(def);
@@ -901,6 +908,7 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data, PF_ParamDef *params
                         OLMDB_THICKNESS);
 
     AEFX_CLR_STRUCT(def);
+    PF_STRNNCPY(def.PF_DEF_NAME, "Thickness", sizeof(def.PF_DEF_NAME));  // binary names group ends
     PF_END_TOPIC(OLMDB_NOISE_END);
 
     out_data->num_params = OLMDB_NUM_PARAMS;

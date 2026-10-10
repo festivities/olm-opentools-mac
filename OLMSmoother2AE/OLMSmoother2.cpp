@@ -124,7 +124,7 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data) {
                   PF_ParamFlag_SUPERVISE, OLMS2_ID_GAMMA_MODE);
 
     AEFX_CLR_STRUCT(def);
-    PF_ADD_FLOAT_SLIDERX("Gamma Value", 1.0, 4.8, 1.0, 4.8, 2.4, 2,
+    PF_ADD_FLOAT_SLIDERX("Gamma Value", 1.0, 2.4, 1.0, 2.4, 2.4, 2,
                          PF_ValueDisplayFlag_NONE, PF_ParamFlag_NONE,
                          OLMS2_ID_GAMMA_VALUE);
 
@@ -309,9 +309,11 @@ SrgbLut g_decode_lut;  // sRGB -> linear
 SrgbLut g_encode_lut;  // linear -> sRGB
 
 void BuildLuts() {
+    // Grid position is a single-precision divide in the binary (0x18000A8E0/A740:
+    // v7 = (float)((float)i / 9999.0f)), not a double divide.
     if (!g_decode_lut.built) {
         for (int i = 0; i < kLutN; ++i) {
-            const double x = (double)i / (double)(kLutN - 1);
+            const double x = (double)((float)i / (float)(kLutN - 1));
             double v;
             if (x > 0.0) {
                 if (x < 1.0) {
@@ -331,7 +333,7 @@ void BuildLuts() {
     }
     if (!g_encode_lut.built) {
         for (int i = 0; i < kLutN; ++i) {
-            const double x = (double)i / (double)(kLutN - 1);
+            const double x = (double)((float)i / (float)(kLutN - 1));
             double v;
             if (x > 0.0) {
                 if (x < 1.0) {
@@ -2828,11 +2830,10 @@ void BlendFinish(float *v, float gamma, bool apply) {
         for (int i = 0; i < 3; ++i)
             v[i] = (float)std::pow((double)v[i], (double)gamma);
     }
-    for (int i = 0; i < 3; ++i) {
-        if (v[i] >= 0.0f) v[i] = std::min(1.0f, v[i]);
-        else v[i] = 0.0f;
-    }
-    v[3] = a >= 0.0f ? std::min(1.0f, a) : 0.0f;
+    // Clamp as the binary does (probed on 0x18000B1E0): x < 0 -> 0, else MSVC
+    // fminf(1, x), which passes NaN through (-0 and NaN are kept, +inf -> 1).
+    for (int i = 0; i < 3; ++i) v[i] = (v[i] < 0.0f) ? 0.0f : ((1.0f < v[i]) ? 1.0f : v[i]);
+    v[3] = (a < 0.0f) ? 0.0f : ((1.0f < a) ? 1.0f : a);
 }
 
 // --- Per-pixel glue (0x18000CDA0) + writers (0x180003370/36E0/3990) ----------
@@ -2928,7 +2929,10 @@ PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data, PF_SmartRenderExtra
             err = PF_Err_BAD_CALLBACK_PARAM;
         if (!err) err = in_data->utils->copy(in_data->effect_ref, input, output, nullptr,
                                              nullptr);
-        if (!err) {
+        // The binary's kernel throws "Input images do not have the same size." when
+        // input and output dimensions differ; EffectMain swallows it, so the output
+        // keeps the copy and no error is returned. Match that (no render, no OOB write).
+        if (!err && output->width == input->width && output->height == input->height) {
             const A_long width = input->width;
             const A_long height = input->height;
             AEFX_SuiteScoper<PF_WorldSuite2> world_suite(in_data, kPFWorldSuite,

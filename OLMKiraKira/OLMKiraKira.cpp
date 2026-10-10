@@ -223,7 +223,7 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data) {
     AddRamp(in_data, def, 36);
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(38);
-    AddSlider(in_data, def, "Highlight Radius", 0, 8000, 0, 200, 0, 6);
+    AddSlider(in_data, def, "Highlight Radius", 0, 500, 0, 200, 0, 6);
     AddColor(in_data, def, "Highlight Color", 16);
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Highlight Color Ramp", 39);
@@ -449,11 +449,11 @@ void IIR(const Img &src, Img &dst, int k) {
             dst.at(0, y, c) = 0;
             for (int x = 1; x < src.w; ++x)
                 dst.at(x, y, c) = a * dst.at(x - 1, y, c) + b * src.at(x - 1, y, c);
-            // Binary runs in place, so the backward pass reads the forward
-            // result (second-order), not the original source.
+            // Backward pass reads the original source (impulse response is symmetric,
+            // zero at the centre); the forward result is only summed into dst.
             float acc = 0;
             for (int x = src.w - 2; x >= 0; --x) {
-                acc = a * acc + b * dst.at(x + 1, y, c);
+                acc = a * acc + b * src.at(x + 1, y, c);
                 dst.at(x, y, c) += acc;
             }
         }
@@ -479,8 +479,10 @@ void Warp(const Img &src, Img &dst, const double m[6]) {
     dst = Make(src.w, src.h, src.ch);
     for (int y = 0; y < src.h; ++y)
         for (int x = 0; x < src.w; ++x) {
-            const float sx = (float)(m[0] * x + m[1] * y + m[2]);
-            const float sy = (float)(m[3] * x + m[4] * y + m[5]);
+            // warpAffine: 1/1024 px integer coordinates (AB_SCALE), truncated to 1/32 px taps (INTER_TAB_SIZE).
+            const int X = ((int)std::lrint((m[1] * y + m[2]) * 1024.0) + 16 + (int)std::lrint(m[0] * x * 1024.0)) >> 5;
+            const int Y = ((int)std::lrint((m[4] * y + m[5]) * 1024.0) + 16 + (int)std::lrint(m[3] * x * 1024.0)) >> 5;
+            const float sx = X / 32.f, sy = Y / 32.f;
             for (int c = 0; c < src.ch; ++c) dst.at(x, y, c) = Sample(src, sx, sy, c);
         }
 }
@@ -496,6 +498,17 @@ void RotMatrix(double cx, double cy, float deg, double m[6]) {
     m[5] = beta * cx + (1 - alpha) * cy;
 }
 
+// cv::resize INTER_LINEAR replicates the edge (coords clamp to [0, n-1]); Sample() is zero-padded (warpAffine).
+float SampleReplicate(const Img &im, float x, float y, int c) {
+    x = std::min(std::max(x, 0.f), (float)(im.w - 1));
+    y = std::min(std::max(y, 0.f), (float)(im.h - 1));
+    const int x0 = (int)std::floor(x), y0 = (int)std::floor(y);
+    const float fx = x - x0, fy = y - y0;
+    auto pix = [&](int xx, int yy) { return im.at(std::min(xx, im.w - 1), std::min(yy, im.h - 1), c); };
+    const float a = pix(x0, y0), b = pix(x0 + 1, y0), d = pix(x0, y0 + 1), e = pix(x0 + 1, y0 + 1);
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (d * (1 - fx) + e * fx) * fy;
+}
+
 Img Resize(const Img &src, int dw, int dh) {
     Img dst = Make(std::max(dw, 1), std::max(dh, 1), src.ch);
     const float sx = (float)src.w / (float)dst.w;
@@ -504,7 +517,7 @@ Img Resize(const Img &src, int dw, int dh) {
         for (int x = 0; x < dst.w; ++x) {
             const float fx = ((float)x + 0.5f) * sx - 0.5f;
             const float fy = ((float)y + 0.5f) * sy - 0.5f;
-            for (int c = 0; c < src.ch; ++c) dst.at(x, y, c) = Sample(src, fx, fy, c);
+            for (int c = 0; c < src.ch; ++c) dst.at(x, y, c) = SampleReplicate(src, fx, fy, c);
         }
     return dst;
 }
@@ -606,12 +619,13 @@ Img Arm(const Img &base, float deg, int size, int mode, bool norm) {
     Img canvas = Make(cols, rows, base.ch);
     PasteCenter(base, canvas);
     double m[6];
-    RotMatrix(cols * 0.5, rows * 0.5, deg, m);
+    // Warp samples src(M*p) (M is the inverse map); OpenCV warpAffine(M) inverts M first, so pass -deg.
+    RotMatrix(cols * 0.5, rows * 0.5, -deg, m);
     Img spun;
     Warp(canvas, spun, m);
     Img blurred;
     Blur(spun, blurred, mode, size, false, norm);
-    RotMatrix(cols * 0.5, rows * 0.5, -deg, m);
+    RotMatrix(cols * 0.5, rows * 0.5, deg, m);
     Img back;
     Warp(blurred, back, m);
     return CropCenter(back, base.w, base.h);
@@ -694,9 +708,11 @@ Img Sparkle(const Img &src, const Spark &sp) {
     if (sp.sizes[4] <= 0) {
         dirs[4] = Make(src.w, src.h, mask.ch);
     } else {
-        Blur(mask, dirs[4], sp.blur, sp.sizes[4], true, norm);
+        // Square highlight: the 3-pass modes are normalised per pass (e2e: binary t = mean / n^2 in RGB).
+        const bool hl_norm = sp.blur == 2 || sp.blur == 4 ? true : norm;
+        Blur(mask, dirs[4], sp.blur, sp.sizes[4], true, hl_norm);
         const int n = 2 * sp.sizes[4] + 1;
-        vol[4] = (sp.blur == 2 || sp.blur == 4) ? (float)n * n * n * n : (float)n * n;
+        vol[4] = (float)n * n;
     }
     Img out;
     Compose(dirs, sp, vol, out);
@@ -829,7 +845,8 @@ PF_Err Checkout(PF_InData *in, Spark &sp) {
     PF_CHECKIN_PARAM(in, &d);
     err = get(OLMKK_CHANNEL, d);
     if (err) return err;
-    sp.channel = d.u.pd.value;
+    // Popup values 5/6 (num_choices 6, only 4 items) render exactly as RGB (3) in the binary (e2e-verified).
+    sp.channel = d.u.pd.value >= 5 ? 3 : d.u.pd.value;
     PF_CHECKIN_PARAM(in, &d);
     err = get(OLMKK_MERGE, d);
     if (err) return err;

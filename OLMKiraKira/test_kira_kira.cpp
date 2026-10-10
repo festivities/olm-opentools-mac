@@ -279,7 +279,12 @@ void TestBlurModes() {
         SetSpark(h, 1, m, 4);
         Put(h, 3, 3, {255, 255, 255, 255});
         CHECK(Render(h) == PF_Err_NONE, "blur mode render");
-        CHECK(Get(h, 3, 3).alpha > 0, "blur mode lights center");
+        if (m == 4) {
+            // Exponential is two one-sided IIR tails; the impulse pixel itself stays 0 (binary-verified).
+            CHECK(Get(h, 3, 3).alpha == 0 && Get(h, 3, 2).alpha > 0, "exponential tails, centre 0");
+        } else {
+            CHECK(Get(h, 3, 3).alpha > 0, "blur mode lights center");
+        }
     }
     // Highlight glow only (no arms): radius 3, mode 1.
     Host h;

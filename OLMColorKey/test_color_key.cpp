@@ -1475,15 +1475,18 @@ bool ScenarioDistancesNonSquare(TestHost &host) {
     CHECK(PixelIs(host, host.output, 4, 1, 1, 1, 1, 0),
           "Box: two vertical steps 8 not restored");
 
-    // Approx, thin=5: only axis moves, so the diagonal is wx+wy = 6, while two
-    // horizontal steps cost 2*wx = 4.
+    // Approx, thin=5: the Windows binary (0x180005D60) takes min(down, right)+wy for the
+    // right-neighbour term and carries the candidate (not the stored value) into the +wx term.
+    // E2E replay vs binary: the first step off the keyed ring at (4,3) costs wy=4, so (3,3)
+    // restores; the next horizontal step adds wx: (2,3) = 6 > 5 stays keyed.
     SetThin(host, 5, OLMCK_DIST_APPROX);
     if (!RenderChecked(host, "Approx den(2,4) thin 5")) return false;
     CHECK(PixelIs(host, host.output, 4, 2, 1, 1, 1, 1), "Approx: above dist 4 restored");
     CHECK(PixelIs(host, host.output, 3, 2, 1, 1, 1, 0),
           "Approx diagonal dist 6 not restored");
-    CHECK(PixelIs(host, host.output, 2, 3, 1, 1, 1, 1),
-          "Approx: two horizontal steps 4 restored");
+    CHECK(PixelIs(host, host.output, 3, 3, 1, 1, 1, 1), "Approx: first horizontal step (wy=4) restored");
+    CHECK(PixelIs(host, host.output, 2, 3, 1, 1, 1, 0),
+          "Approx: two horizontal steps 4+2 = 6 not restored");
 
     host.in.downsample_x.den = 1;
     host.in.downsample_y.den = 1;
@@ -1533,8 +1536,10 @@ bool ScenarioBlur(TestHost &host, const char *label) {
     SetBlur(host, 2.0f, OLMCK_DIST_BOX, OLMCK_DIR_OUTSIDE);
     if (!RenderChecked(host, label)) return false;
     CHECK(PixelIs(host, host.output, 5, 3, 1, 0, 0, 1), "blur outside: keyed unchanged");
-    CHECK(PixelIs(host, host.output, 2, 3, 1, 1, 1, EncDec(host, 0.5f)),
-          "blur outside: neighbour half");
+    // Outside uses the binary's double-precision sin: (2,3) = 0.49999997 (e2e replay vs binary:
+    // 127 at 8 bpc, 16383 at 16 bpc, 0.49999997 at 32 bpc), not an exact 0.5.
+    CHECK(PixelIs(host, host.output, 2, 3, 1, 1, 1, EncDec(host, 0.49999997f)),
+          "blur outside: neighbour half (binary double sin)");
     CHECK(PixelIs(host, host.output, 1, 3, 1, 1, 1, 0), "blur outside: far outside zero");
     std::printf("%s OK\n", label);
     return true;
@@ -1801,7 +1806,8 @@ bool ScenarioCountGuardPermissive() {
     reset_output(host);
     err = run_render(host, request);
     host.permissive_checkout = false;
-    CHECK(err == PF_Err_BAD_CALLBACK_PARAM, "count -1 must be rejected as well");
+    // e2e (binary vs port): count -1 renders with no colours, no error (Windows binary loops only while count > 0).
+    CHECK(err == PF_Err_NONE, "count -1 renders with no colours, as the binary does");
     teardown_host(host);
     std::printf("permissive-host count guard OK\n");
     return true;

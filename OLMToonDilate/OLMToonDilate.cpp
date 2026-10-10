@@ -176,7 +176,9 @@ PF_Err EffectMain(PF_Cmd cmd, PF_InData *in_data, PF_OutData *out_data, PF_Param
         case PF_Cmd_GLOBAL_SETUP: return GlobalSetup(in_data, out_data);
         case PF_Cmd_PARAMS_SETUP: return ParamsSetup(in_data, out_data);
         case PF_Cmd_SMART_PRE_RENDER: return PreRender(in_data, (PF_PreRenderExtra *)extra);
-        case PF_Cmd_SMART_RENDER: return SmartRender(in_data, (PF_SmartRenderExtra *)extra);
+        // Binary routes SMART_RENDER_GPU (31) to the same CPU render (entry_point case 31).
+        case PF_Cmd_SMART_RENDER:
+        case PF_Cmd_SMART_RENDER_GPU: return SmartRender(in_data, (PF_SmartRenderExtra *)extra);
         default: return PF_Err_NONE;
     }
 }
