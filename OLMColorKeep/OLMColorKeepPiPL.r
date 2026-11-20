@@ -8,8 +8,9 @@
 resource 'PiPL' (16000) {
 	{
 		Kind { AEEffect },
-		/* Binary PiPL: Name is "Color Keep" (no OLM prefix); Match Name has it. */
-		Name { "Color Keep" },
+		/* Binary PiPL (ColorKeep-20261120.aex, verified): Name "OLM Color Keep",
+		 * Match Name "OLM Color Keep" (unchanged, so old projects still resolve). */
+		Name { "OLM Color Keep" },
 		Category { "OLM Plug-ins" },
 #ifdef AE_OS_WIN
 	#if defined(AE_PROC_INTELx64)
@@ -23,10 +24,11 @@ resource 'PiPL' (16000) {
 #endif
 		AE_PiPL_Version { 2, 0 },
 		AE_Effect_Spec_Version { 13, 29 },
-		AE_Effect_Version { 526336 },
+		/* 0x00088000 = PF_VERSION(1,1,0,DEVELOP,0) (binary-exact). */
+		AE_Effect_Version { 557056 },
 		AE_Effect_Info_Flags { 0 },
-		/* Binary raw out_flags are 0x02000040 (USE_OUTPUT_EXTENT |
-		 * DEEP_COLOR_AWARE); the port adds SEND_UPDATE_PARAMS_UI (bit 26). */
+		/* Binary 0x02000040 (USE_OUTPUT_EXTENT | DEEP_COLOR_AWARE); the port adds
+		 * SEND_UPDATE_PARAMS_UI -> 0x06000040 (see OLMColorKeep.cpp GlobalSetup). */
 		AE_Effect_Global_OutFlags { 0x06000040 },
 		/* 0x08001400 = SUPPORTS_SMART_RENDER | FLOAT_COLOR_AWARE |
 		 * SUPPORTS_THREADED_RENDERING (binary-exact). */

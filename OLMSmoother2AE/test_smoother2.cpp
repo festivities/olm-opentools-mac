@@ -630,22 +630,17 @@ bool verify_setup() {
                   def.u.sd.dephault == 0,
               "pos5 Extra Smooth 0..100 dflt 0 (id 4)");
     }
-    {
-        const PF_ParamDef &def = host.added[6];
-        CHECK(def.uu.id == 5 && def.param_type == PF_Param_SLIDER &&
-                  SameString(def.PF_DEF_NAME, "Smooth Range") &&
-                  def.u.sd.valid_min == 0 && def.u.sd.valid_max == 100 &&
-                  def.u.sd.slider_min == 0 && def.u.sd.slider_max == 100 &&
-                  def.u.sd.dephault == 2,
-              "pos6 Smooth Range 0..100 dflt 2 (id 5)");
-    }
+    // 2.2: Smooth Range is a float slider (0x180007A30, type 10), dflt 2.0, prec 1.
+    CHECK(CheckFloatSlider(host.added[6], "Smooth Range", 0, 100, 0, 100, 2, 1, 5),
+          "pos6 Smooth Range float 0..100 dflt 2 prec 1 (id 5)");
     {
         const PF_ParamDef &def = host.added[7];
         CHECK(def.uu.id == 6 && def.param_type == PF_Param_POPUP &&
-                  def.u.pd.num_choices == 2 && def.u.pd.dephault == 2 &&
+                  def.u.pd.num_choices == 3 && def.u.pd.dephault == 2 &&
                   SameString(def.PF_DEF_NAME, "Smoother Version") &&
-                  SameString(def.u.pd.u.PF_DEF_NAMESPTR, "v1|v2"),
-              "pos7 Smoother Version v1|v2 dflt 2 (id 6)");
+                  SameString(def.u.pd.u.PF_DEF_NAMESPTR, "v1 (sRGB)|v2 (Linear)|v2 (Oklab)") &&
+                  (def.flags & PF_ParamFlag_SUPERVISE),
+              "pos7 Smoother Version 3 items dflt 2 SUPERVISE (id 6)");
     }
     {
         const PF_ParamDef &def = host.added[8];
@@ -681,8 +676,8 @@ bool verify_setup() {
     CHECK(host.added[9].uu.id == 8 && host.added[8].uu.id == 7,
           "position index differs from uu.id");
 
-    CHECK(host.out.my_version == 1081344,
-          "my_version == PF_VERSION(2,1,0,DEVELOP,0) = 1081344");
+    CHECK(host.out.my_version == 1114112,
+          "my_version == PF_VERSION(2,2,0,DEVELOP,0) = 1114112 (binary PiPL)");
     CHECK(host.out.out_flags == 0x06000440,
           "out_flags 0x06000440 (binary 0x02000440 + SEND_UPDATE_PARAMS_UI)");
     CHECK(host.out.out_flags2 == 0x08001400, "out_flags2 0x08001400");
@@ -692,7 +687,7 @@ bool verify_setup() {
         PF_OutData about_out;
         AEFX_CLR_STRUCT(about_out);
         EffectMain(PF_Cmd_ABOUT, &host.in, &about_out, nullptr, nullptr, nullptr);
-        CHECK(SameString(about_out.return_msg, "OLM Smoother v2 2.1\rSmooth images."),
+        CHECK(SameString(about_out.return_msg, "OLM Smoother v2 2.2\rSmooth images."),
               "About text");
     }
 
@@ -711,41 +706,45 @@ bool verify_setup() {
 // --- 2. UPDATE_PARAMS_UI -----------------------------------------------------
 
 struct UiExpect {
-    std::map<PF_ParamIndex, bool> ui_disabled;    // PF_UpdateParamUI records
+    // PF_UpdateParamUI records, in the binary's call order (0x1800023B0): the
+    // Gamma Value record appears twice, as the binary also re-sets id 8.
+    std::vector<std::pair<PF_ParamIndex, bool>> ui_seq;
     std::map<PF_ParamIndex, bool> stream_hidden;  // SetDynamicStreamFlag records
 };
 
-void BuildUiExpect(UiExpect &e, bool enable, int mode, A_long count) {
-    e.ui_disabled.clear();
+void BuildUiExpect(UiExpect &e, bool enable, int mode, A_long count, bool oklab) {
+    e.ui_seq.clear();
     e.stream_hidden.clear();
-    e.ui_disabled[OLMS2_KEY_COLOR] = !enable;
-    e.ui_disabled[OLMS2_INVERT_KEY] = !enable;
-    e.ui_disabled[OLMS2_GAMMA_VALUE] = (mode == OLMS2_GAMMA_NONE);
-    e.ui_disabled[OLMS2_GAMMA_COUNT] = (mode != OLMS2_GAMMA_COLORS);
+    e.ui_seq.push_back({OLMS2_KEY_COLOR, !enable});
+    e.ui_seq.push_back({OLMS2_INVERT_KEY, !enable});
+    e.ui_seq.push_back({OLMS2_GAMMA_MODE, oklab});                       // id 7
+    e.ui_seq.push_back({OLMS2_GAMMA_VALUE, oklab});                      // id 8
+    e.ui_seq.push_back({OLMS2_GAMMA_VALUE, oklab || mode == OLMS2_GAMMA_NONE});
+    e.ui_seq.push_back({OLMS2_GAMMA_COUNT, oklab || mode != OLMS2_GAMMA_COLORS});
     for (int i = 0; i < OLMS2_MAX_GAMMA_COLORS; ++i) {
         e.stream_hidden[OLMS2_GAMMA_COLOR_0 + i] =
-            !(mode == OLMS2_GAMMA_COLORS && i < count);
+            !(!oklab && mode == OLMS2_GAMMA_COLORS && i < count);
     }
 }
 
 bool VerifyUiRecords(TestHost &host, const UiExpect &e) {
-    if (host.ui_records.size() != e.ui_disabled.size()) {
+    if (host.ui_records.size() != e.ui_seq.size()) {
         std::printf("FAIL: UI expected %lu UpdateParamUI records, got %lu\n",
-                    (unsigned long)e.ui_disabled.size(),
+                    (unsigned long)e.ui_seq.size(),
                     (unsigned long)host.ui_records.size());
         ++g_failures;
         return false;
     }
     for (size_t i = 0; i < host.ui_records.size(); ++i) {
         const PF_ParamIndex position = host.ui_records[i].position;
-        std::map<PF_ParamIndex, bool>::const_iterator it = e.ui_disabled.find(position);
-        if (it == e.ui_disabled.end()) {
-            std::printf("FAIL: unexpected UpdateParamUI for position %d\n", (int)position);
+        if (position != e.ui_seq[i].first) {
+            std::printf("FAIL: UpdateParamUI #%lu at position %d, expected %d\n",
+                        (unsigned long)i, (int)position, (int)e.ui_seq[i].first);
             ++g_failures;
             return false;
         }
         PF_ParamDef expected = host.params[(size_t)position];
-        if (it->second) expected.ui_flags |= PF_PUI_DISABLED;
+        if (e.ui_seq[i].second) expected.ui_flags |= PF_PUI_DISABLED;
         else expected.ui_flags &= ~((A_long)PF_PUI_DISABLED);
         if (std::memcmp(&host.ui_records[i].def, &expected, sizeof(PF_ParamDef)) != 0) {
             std::printf("FAIL: UpdateParamUI def mismatch at %d (must be the host's "
@@ -782,10 +781,12 @@ bool VerifyUiRecords(TestHost &host, const UiExpect &e) {
     return true;
 }
 
-bool RunUiMode(TestHost &host, bool enable, int mode, A_long count, const char *label) {
+bool RunUiMode(TestHost &host, bool enable, int mode, A_long count, const char *label,
+               A_long version = 2) {
     host.params[OLMS2_ENABLE_KEY].u.bd.value = enable ? 1 : 0;
     host.params[OLMS2_GAMMA_MODE].u.pd.value = (A_long)mode;
     host.params[OLMS2_GAMMA_COUNT].u.sd.value = count;
+    host.params[OLMS2_VERSION].u.pd.value = version;  // 1 sRGB, 2 linear, 3 Oklab
     host.ui_records.clear();
     host.stream_records.clear();
     host.effect_disposes = 0;
@@ -800,7 +801,7 @@ bool RunUiMode(TestHost &host, bool enable, int mode, A_long count, const char *
         return false;
     }
     UiExpect e;
-    BuildUiExpect(e, enable, mode, count);
+    BuildUiExpect(e, enable, mode, count, version == 3);
     if (!VerifyUiRecords(host, e)) return false;
     std::printf("UI %s: %lu disable + %lu stream records OK\n", label,
                 (unsigned long)host.ui_records.size(),
@@ -832,6 +833,13 @@ bool verify_ui() {
     if (!RunUiMode(host, true, OLMS2_GAMMA_COLORS, 2, "on/GammaColors/2/reject-zeroed"))
         return false;
     host.ui_reject_zeroed = false;
+
+    // 2.2 Oklab: Gamma Correction, Gamma Value and the count are disabled and no
+    // gamma picker is shown, whatever the gamma mode says.
+    if (!RunUiMode(host, true, OLMS2_GAMMA_COLORS, 3, "on/oklab/GammaColors/3", 3)) return false;
+    if (!RunUiMode(host, false, OLMS2_GAMMA_ALL, 5, "off/oklab/AllColors", 3)) return false;
+    if (!RunUiMode(host, true, OLMS2_GAMMA_NONE, 1, "on/v1/None", 1)) return false;
+    host.params[OLMS2_VERSION].u.pd.value = 2;
 
     teardown_host(host);
     return true;
@@ -993,7 +1001,7 @@ bool verify_edges() {
     e.w = 2;
     e.h = 2;
     e.stride = 2 * 4;
-    BuildEdges(c, e, 2);
+    BuildEdges(c, e, 2.0f * 0.01f);  // Smooth Range 2 -> ctx+40 = 2 * 0.01f
     // (0,0): nothing (y=0 row has no up edges; x=0 no left).
     CHECK(e.Byte(0, 0, 0) == 0 && e.Byte(0, 0, 1) == 0 && e.Byte(0, 0, 2) == 0 &&
               e.Byte(0, 0, 3) == 0,
@@ -1001,10 +1009,11 @@ bool verify_edges() {
     CHECK(e.Byte(1, 0, 0) == 0 && e.Byte(1, 0, 1) == 0 && e.Byte(1, 0, 2) == 0 &&
               e.Byte(1, 0, 3) == 0,
           "top row has no edges");
-    // (0,1): b1 up present (white above, black here); b0 absent (x=0); b2 absent; b3 needs x+1 < W-1.
+    // (0,1): b1 up present (white above, black here); b0 absent (x=0); b2 absent;
+    // b3 (up-right, white at (1,0)) present: 2.2 tests it when x < W-1 (was x+1 < W-1).
     CHECK(e.Byte(0, 1, 0) == 0 && e.Byte(0, 1, 1) == 0xFF && e.Byte(0, 1, 2) == 0 &&
-              e.Byte(0, 1, 3) == 0,
-          "(0,1) only b1 up");
+              e.Byte(0, 1, 3) == 0xFF,
+          "(0,1) b1 up + b3 up-right (2.2 rule, x < W-1)");
     // (1,1): b1 up present; b2 up-left present; b0 absent (same row); b3 needs x+1=2 < W-1=1 -> no.
     CHECK(e.Byte(1, 1, 0) == 0 && e.Byte(1, 1, 1) == 0xFF && e.Byte(1, 1, 2) == 0xFF &&
               e.Byte(1, 1, 3) == 0,
@@ -1036,7 +1045,7 @@ bool ScenarioFamilyA(TestHost &host, int depth) {
     host.params[OLMS2_VERSION].u.pd.value = 1;
     host.params[OLMS2_SMOOTHNESS].u.sd.value = 100;
     host.params[OLMS2_EXTRA_SMOOTH].u.sd.value = 0;
-    host.params[OLMS2_SMOOTH_RANGE].u.sd.value = 2;
+    host.params[OLMS2_SMOOTH_RANGE].u.fs_d.value = 2.0;  // float slider in 2.2
     if (!RenderChecked(host, "family A")) return false;
 
     // Independent corner-weight computation (the run-gated 0.4/0.2/0.4 split
@@ -1198,6 +1207,37 @@ bool verify_stair_math() {
     return true;
 }
 
+// --- 2b. Oklab transforms (0x180005520 forward / 0x180005840 inverse) --------
+bool verify_oklab() {
+    const float white[4] = {1.0f, 1.0f, 1.0f, 0.5f};
+    float lab[4], back[4];
+    LinearToOklab(white, lab);
+    CHECK(std::fabs(lab[0] - 1.0f) < 1e-5f && std::fabs(lab[1]) < 1e-5f &&
+              std::fabs(lab[2]) < 1e-5f && lab[3] == 0.5f,
+          "Oklab(white) = (1, 0, 0, A)");
+    OklabToLinear(lab, back);
+    CHECK(std::fabs(back[0] - 1.0f) < 1e-5f && std::fabs(back[1] - 1.0f) < 1e-5f &&
+              std::fabs(back[2] - 1.0f) < 1e-5f && back[3] == 0.5f,
+          "OklabToLinear(white) = white");
+    const float black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    LinearToOklab(black, lab);
+    CHECK(lab[0] == 0.0f && lab[1] == 0.0f && lab[2] == 0.0f, "Oklab(black) = 0");
+    // Round trip over a grid of linear colours (float; cbrt + cube).
+    float worst = 0.0f;
+    const float levels[5] = {0.0f, 0.1f, 0.5f, 0.9f, 1.0f};
+    for (float r : levels)
+        for (float g : levels)
+            for (float b : levels) {
+                const float rgb[4] = {r, g, b, 1.0f};
+                LinearToOklab(rgb, lab);
+                OklabToLinear(lab, back);
+                for (int i = 0; i < 3; ++i) worst = std::max(worst, std::fabs(back[i] - rgb[i]));
+            }
+    CHECK(worst < 1e-5f, "Oklab forward/inverse round trip < 1e-5 over a colour grid");
+    std::printf("oklab: white/black/round-trip (worst %.3g) OK\n", (double)worst);
+    return true;
+}
+
 int RunAllTests() {
     int failed_scenarios = 0;
 
@@ -1211,6 +1251,7 @@ int RunAllTests() {
     }
     if (!verify_edges()) ++failed_scenarios;
     if (!verify_stair_math()) ++failed_scenarios;
+    if (!verify_oklab()) ++failed_scenarios;
 
     for (int depth = 8; depth <= 32; depth <<= 1) {
         {

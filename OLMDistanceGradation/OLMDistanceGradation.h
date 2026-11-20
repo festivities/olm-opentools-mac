@@ -11,11 +11,11 @@
 #include "Param_Utils.h"
 #include "Smart_Utils.h"
 
-#define OLMDG_ABOUT "DistanceGradation v0.82\rGenerate color gradation using distance transform."
+#define OLMDG_ABOUT "DistanceGradation v0.83\rGenerate color gradation using distance transform."
 
 #define OLMDG_MAJOR_VERSION 0
 #define OLMDG_MINOR_VERSION 8
-#define OLMDG_BUG_VERSION   2
+#define OLMDG_BUG_VERSION   3
 
 // Parameter positions == uu.id.
 enum {
@@ -32,6 +32,7 @@ enum {
     OLMDG_POWER,          // float 0.01..5
     OLMDG_BLUR_MODE,      // popup No Blur|Blur No Scale|Blur
     OLMDG_BLUR_SIZE,      // slider 0..4096
+    OLMDG_PADDING,        // checkbox "Use Padding" (0.8.3, string index 23)
     OLMDG_NUM_PARAMS
 };
 
@@ -53,6 +54,7 @@ struct OLMDGParams {
     float power;
     A_long blur_mode;
     A_long blur_size;
+    bool use_padding;
 };
 
 extern "C" {

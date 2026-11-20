@@ -1,12 +1,12 @@
 // Fake AE host; production EffectMain runs PARAMS_SETUP -> SMART_PRE_RENDER ->
-// SMART_RENDER below. Covers: 224-param identities/defaults, UPDATE_PARAMS_UI
+// SMART_RENDER below. Covers: 1624-param identities/defaults (200 slots), UPDATE_PARAMS_UI
 // visibility for all control modes via mocked AEGP suites, exact key/keep
 // alpha + RGB preservation, replacement gating and first-enabled-hit, all six
 // color spaces, per-color/per-component/both thresholds, premultiplied
 // matching, epsilon/precision boundaries, thin erosion/growth with source
 // restore, box/approx/Euclidean distances (incl. non-square downsample and
 // no-seed), Inside/Around/Outside blur profiles, Color Keep inversion,
-// padded row stride, sub-extent renders, count>25 rejection and callback
+// padded row stride, sub-extent renders, count>200 rejection and callback
 // balance, at 8/16/32 bpc.
 #include "OLMColorKey.cpp"
 
@@ -733,8 +733,8 @@ bool verify_setup() {
         ++g_failures;
         return false;
     }
-    CHECK(host.out.num_params == 224, "num_params == 224");
-    CHECK(host.add_count == 223, "223 params added");
+    CHECK(host.out.num_params == OLMCK_NUM_PARAMS, "num_params == 1624 (24 + 200 slots * 8)");
+    CHECK(host.add_count == OLMCK_NUM_PARAMS - 1, "1623 params added");
 
     const PF_ParamDef &keep = host.added[1];
     CHECK(keep.uu.id == 1 && keep.param_type == PF_Param_CHECKBOX &&
@@ -828,10 +828,10 @@ bool verify_setup() {
         const PF_ParamDef &def = host.added[22];
         CHECK(def.uu.id == 21 && def.param_type == PF_Param_SLIDER &&
                   SameString(def.PF_DEF_NAME, "Number of Colors") &&
-                  def.u.sd.valid_min == 0 && def.u.sd.valid_max == 25 &&
+                  def.u.sd.valid_min == 0 && def.u.sd.valid_max == 200 &&
                   def.u.sd.slider_min == 0 && def.u.sd.slider_max == 30 &&
                   def.u.sd.dephault == 1 && (def.flags & PF_ParamFlag_SUPERVISE),
-              "pos22 Number of Colors (valid 0..25, slider 0..30, SUPERVISE)");
+              "pos22 Number of Colors (valid 0..200, slider 0..30, SUPERVISE)");
     }
     {
         const PF_ParamDef &def = host.added[23];
@@ -846,19 +846,19 @@ bool verify_setup() {
         char name[64];
         const PF_ParamDef &use_color = host.added[(size_t)base];
         std::snprintf(msg, sizeof(msg), "slot %d Use Color", n);
-        CHECK(use_color.uu.id == 524 + 3 * n &&
+        CHECK(use_color.uu.id == OLMCK_SlotIdUseColor(n) &&
                   use_color.param_type == PF_Param_CHECKBOX &&
                   use_color.u.bd.dephault == 1,
               msg);
         const PF_ParamDef &use_replace = host.added[(size_t)(base + 1)];
         std::snprintf(msg, sizeof(msg), "slot %d Use Replace Color", n);
-        CHECK(use_replace.uu.id == 525 + 3 * n &&
+        CHECK(use_replace.uu.id == OLMCK_SlotIdUseReplace(n) &&
                   use_replace.param_type == PF_Param_CHECKBOX &&
                   use_replace.u.bd.dephault == 0,
               msg);
         const PF_ParamDef &color = host.added[(size_t)(base + 2)];
         std::snprintf(msg, sizeof(msg), "slot %d Color", n);
-        CHECK(color.uu.id == 22 + 5 * n && color.param_type == PF_Param_COLOR &&
+        CHECK(color.uu.id == OLMCK_SlotIdColor(n) && color.param_type == PF_Param_COLOR &&
                   color.u.cd.value.red == 0 && color.u.cd.value.green == 0 &&
                   color.u.cd.value.blue == 0 && color.u.cd.value.alpha == 255 &&
                   color.u.cd.dephault.alpha == 255 &&
@@ -866,29 +866,29 @@ bool verify_setup() {
               msg);
         const PF_ParamDef &replace = host.added[(size_t)(base + 3)];
         std::snprintf(msg, sizeof(msg), "slot %d Replace Color", n);
-        CHECK(replace.uu.id == 526 + 3 * n && replace.param_type == PF_Param_COLOR &&
+        CHECK(replace.uu.id == OLMCK_SlotIdReplaceColor(n) && replace.param_type == PF_Param_COLOR &&
                   replace.u.cd.value.alpha == 255 &&
                   (replace.flags & PF_ParamFlag_COLLAPSE_TWIRLY),
               msg);
         std::snprintf(name, sizeof(name), "Threshold %d", n + 1);
         std::snprintf(msg, sizeof(msg), "slot %d Threshold", n);
         CHECK(CheckFloatSlider(host.added[(size_t)(base + 4)], name, 0.0, 1.0, 0.0, 1.0,
-                               0.0, 4, true, 23 + 5 * n),
+                               0.0, 4, true, OLMCK_SlotIdThreshold(n)),
               msg);
         std::snprintf(name, sizeof(name), "Threshold(R,H,L,Y,Y) %d", n + 1);
         std::snprintf(msg, sizeof(msg), "slot %d Threshold R", n);
         CHECK(CheckFloatSlider(host.added[(size_t)(base + 5)], name, 0.0, 1.0, 0.0, 1.0,
-                               0.0, 4, true, 24 + 5 * n),
+                               0.0, 4, true, OLMCK_SlotIdThresholdR(n)),
               msg);
         std::snprintf(name, sizeof(name), "Threshold(G,S,a,U,Cr) %d", n + 1);
         std::snprintf(msg, sizeof(msg), "slot %d Threshold G", n);
         CHECK(CheckFloatSlider(host.added[(size_t)(base + 6)], name, 0.0, 1.0, 0.0, 1.0,
-                               0.0, 4, true, 25 + 5 * n),
+                               0.0, 4, true, OLMCK_SlotIdThresholdG(n)),
               msg);
         std::snprintf(name, sizeof(name), "Threshold(B,V,b,V,Cb) %d", n + 1);
         std::snprintf(msg, sizeof(msg), "slot %d Threshold B", n);
         CHECK(CheckFloatSlider(host.added[(size_t)(base + 7)], name, 0.0, 1.0, 0.0, 1.0,
-                               0.0, 4, true, 26 + 5 * n),
+                               0.0, 4, true, OLMCK_SlotIdThresholdB(n)),
               msg);
     }
     CHECK(host.added[216].uu.id == 596 && host.added[217].uu.id == 597 &&
@@ -896,10 +896,29 @@ bool verify_setup() {
               host.added[220].uu.id == 143 && host.added[221].uu.id == 144 &&
               host.added[222].uu.id == 145 && host.added[223].uu.id == 146,
           "last slot ids 596/597/142/598/143/144/145/146");
+    // Second slot block (slots 100..199, binary 2.3.3 ids as literals, independent of
+    // the OLMCK_SlotId* helpers): slot 100 at positions 824..831, slot 199 at 1616..1623.
+    CHECK(host.added[824].uu.id == 1324 && host.added[825].uu.id == 1325 &&
+              host.added[826].uu.id == 824 && host.added[827].uu.id == 1326 &&
+              host.added[828].uu.id == 825 && host.added[829].uu.id == 826 &&
+              host.added[830].uu.id == 827 && host.added[831].uu.id == 828,
+          "slot 100 ids 1324/1325/824/1326/825/826/827/828");
+    CHECK(host.added[1616].uu.id == 1621 && host.added[1617].uu.id == 1622 &&
+              host.added[1618].uu.id == 1319 && host.added[1619].uu.id == 1623 &&
+              host.added[1620].uu.id == 1320 && host.added[1621].uu.id == 1321 &&
+              host.added[1622].uu.id == 1322 && host.added[1623].uu.id == 1323,
+          "slot 199 ids 1621/1622/1319/1623/1320/1321/1322/1323");
+    // Every id 22..1623 (statics 522/523 included) is used by exactly one position.
+    for (int id = 22; id < OLMCK_NUM_PARAMS; ++id) {
+        int hits = 0;
+        for (int i = 1; i < OLMCK_NUM_PARAMS; ++i)
+            if (host.added[(size_t)i].uu.id == id) ++hits;
+        CHECK(hits == 1, "every uu.id 22..1623 used by exactly one position");
+    }
     CHECK(host.added[9].uu.id == 8 && host.added[8].uu.id == 7,
           "position index differs from uu.id");
 
-    CHECK(host.out.my_version == 1148928, "my_version == PF_VERSION(2,3,1,DEVELOP,0)");
+    CHECK(host.out.my_version == 1153024, "my_version == PF_VERSION(2,3,3,DEVELOP,0)");
     CHECK(host.out.out_flags == 0x06000440,
           "out_flags 0x06000440 (binary + SEND_UPDATE_PARAMS_UI deviation)");
     CHECK(host.out.out_flags2 == 0x08001400, "out_flags2 0x08001400");
@@ -910,13 +929,13 @@ bool verify_setup() {
         AEFX_CLR_STRUCT(about_out);
         EffectMain(PF_Cmd_ABOUT, &host.in, &about_out, nullptr, nullptr, nullptr);
         CHECK(SameString(about_out.return_msg,
-                         "OLM Color Key 2.3.1\rKey or Keep the selected color from the "
+                         "OLM Color Key 2.3.3\rKey or Keep the selected color from the "
                          "source.\rCopyright 2014 OLM Digital, Inc."),
               "About text");
     }
 
     teardown_host(host);
-    std::printf("setup: 224 params, identities, flags, version, about OK\n");
+    std::printf("setup: 1624 params, identities, flags, version, about OK\n");
     return true;
 }
 
@@ -1660,19 +1679,23 @@ bool ScenarioPaddedRows(TestHost &host) {
 }
 
 bool ScenarioCountRejection(TestHost &host) {
-    // count = 26 > 25: slot 26's parameters do not exist; the checkout must
+    // count = 201 > 200: slot 200's parameters do not exist; the checkout must
     // fail and the render must error (no OOB access, no silent pass-through).
     SetKeep(host, true);
-    SetCount(host, 26);
+    SetCount(host, 201);
     FillRect(host, 0, 0, kWidth - 1, kHeight - 1, 1, 1, 1, 1);
     reset_output(host);
     PF_Rect request{0, 0, kWidth, kHeight};
     const PF_Err err = run_render(host, request);
-    CHECK(err != PF_Err_NONE, "count 26 must be rejected with an error");
+    CHECK(err != PF_Err_NONE, "count 201 must be rejected with an error");
     CHECK(host.layer_checkouts == 1 && host.layer_checkins == 1,
           "input layer still checked in after the failed checkout");
+    // count = 200 is the last valid count: the render succeeds.
+    SetCount(host, 200);
+    reset_output(host);
+    CHECK(run_render(host, request) == PF_Err_NONE, "count 200 renders");
     SetCount(host, 1);
-    std::printf("count>25 rejection OK\n");
+    std::printf("count>200 rejection OK\n");
     return true;
 }
 
@@ -1793,13 +1816,13 @@ bool ScenarioCountGuardPermissive() {
     }
     host.permissive_checkout = true;
     SetKeep(host, true);
-    SetCount(host, 26);
+    SetCount(host, 201);
     FillRect(host, 0, 0, kWidth - 1, kHeight - 1, 1, 1, 1, 1);
     reset_output(host);
     PF_Rect request{0, 0, kWidth, kHeight};
     PF_Err err = run_render(host, request);
     CHECK(err == PF_Err_BAD_CALLBACK_PARAM,
-          "count 26 must be rejected by the explicit guard even on a permissive host");
+          "count 201 must be rejected by the explicit guard even on a permissive host");
     CHECK(host.max_checkout_position < OLMCK_NUM_PARAMS,
           "no checkout may target a position beyond the registered parameters");
     SetCount(host, -1);
@@ -1978,7 +2001,7 @@ int main() {
     }
     if (!run_all_for_depth(8, true)) return 1;  // padded rows variant
 
-    // count > 25 rejection (8-bit host is enough).
+    // count > 200 rejection (8-bit host is enough).
     {
         TestHost host;
         if (!init_host(host, 8)) return 1;
@@ -1998,7 +2021,7 @@ int main() {
 
     if (!run_1d_chamfer_tests()) return 1;
 
-    std::printf("PASS: %d checks. 224 params, UI modes, key/keep/replace, six color\n"
+    std::printf("PASS: %d checks. 1624 params (200 slots), UI modes, key/keep/replace, six color\n"
                 "spaces, threshold modes, premultiply, epsilon, thin/blur/EDT,\n"
                 "extents, padded rows, 8/16/32 bpc.\n",
                 g_checks);

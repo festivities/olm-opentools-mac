@@ -12,26 +12,28 @@
 #include "Param_Utils.h"
 #include "Smart_Utils.h"
 
-#define OLMCKP_NAME  "Color Keep"
-#define OLMCKP_ABOUT "Color Keep v1.01\rKeep the selected color from the source.\rCopyright 2010 OLM Digital, Inc."
+// OLM Color Keep 1.1.0 (ColorKeep-20261120.aex). Match name is unchanged, so
+// projects saved with the 1.0.1 effect keep resolving to this plug-in.
+#define OLMCKP_NAME  "OLM Color Keep"
+#define OLMCKP_ABOUT_DESC "Constraint colors"
 
 #define OLMCKP_MAJOR_VERSION 1
-#define OLMCKP_MINOR_VERSION 0
-#define OLMCKP_BUG_VERSION   1
+#define OLMCKP_MINOR_VERSION 1
+#define OLMCKP_BUG_VERSION   0
 
-// Positions equal uu.id here: 0 input, 1 Enabled Color Num, 2..101 Color.
+// Positions equal uu.id: 0 input, 1 Enabled Color Num, 2..201 Color.
 enum {
     OLMCKP_INPUT = 0,
     OLMCKP_COUNT = 1,
     OLMCKP_COLOR_BASE = 2
 };
 
-constexpr int OLMCKP_MAX_COLORS = 100;
-constexpr int OLMCKP_NUM_PARAMS = OLMCKP_COLOR_BASE + OLMCKP_MAX_COLORS;  // 102
+constexpr int OLMCKP_MAX_COLORS = 200;
+constexpr int OLMCKP_NUM_PARAMS = OLMCKP_COLOR_BASE + OLMCKP_MAX_COLORS;  // 202
 
 struct OLMCKPParams {
     A_long count;
-    PF_PixelFloat colors[OLMCKP_MAX_COLORS];
+    PF_PixelFloat colors[OLMCKP_MAX_COLORS];  // ARGB floats, as the binary stores them
 };
 
 extern "C" {

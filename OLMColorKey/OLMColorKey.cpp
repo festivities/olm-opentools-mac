@@ -1,8 +1,12 @@
-/* OLMColorKey: macOS SmartRender port of the Windows OLM Color Key 2.3.1.
- * Every kernel, conversion, distance metric, chamfer/EDT and blur profile
- * below follows the decompiled Windows binary (entry 0x180010010,
- * setup 0x180001000, checkout 0x18000A370, UI 0x180001A50, pre-render
- * 0x18000B560, smart render 0x1800018E0, kernels 0x180009440/8F90/98F0,
+/* OLMColorKey: macOS SmartRender port of the Windows OLM Color Key 2.3.3
+ * (binary dated 2026-11-20; spec %TEMP%\opencode\specs\OLMColorKey-20261120.md).
+ * 2.3.3 addresses: entry 0x180010680, setup 0x180001000, checkout 0x18000A8E0,
+ * UI 0x180001D90, pre-render 0x18000BBD0, smart render 0x180001C20, kernels
+ * 0x1800099B0/9500/9E60, keyers 0x180002360/2F30/3B30. Every kernel, conversion,
+ * distance metric, chamfer/EDT and blur profile below follows the decompiled
+ * Windows binary; the helpers are unchanged from 2.3.1 (2.3.1 addresses below:
+ * entry 0x180010010, setup 0x180001000, checkout 0x18000A370, UI 0x180001A50,
+ * pre-render 0x18000B560, smart render 0x1800018E0, kernels 0x180009440/8F90/98F0,
  * keyers 0x180001E00/29D0/35D0 (16-bit invert 0x1800035B0),
  * distances 0x180004190-0x180004910,
  * conversions 0x180009DA0/9EE0/A120, band mask 0x180008A60-8DD0,
@@ -29,8 +33,8 @@ constexpr float kLab76ShiftB = 163.48801f;
 constexpr float kDegPerRad = 57.295776f;
 
 static_assert(PF_VERSION(OLMCK_MAJOR_VERSION, OLMCK_MINOR_VERSION,
-                          OLMCK_BUG_VERSION, PF_Stage_DEVELOP, 0) == 1148928,
-              "ColorKey version must match its PiPL");
+                          OLMCK_BUG_VERSION, PF_Stage_DEVELOP, 0) == 1153024,
+              "ColorKey version must match its PiPL (2.3.3 = 0x119800)");
 
 AEGP_PluginID g_aegp_id = 0;
 
@@ -157,45 +161,45 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data) {
     for (int n = 0; n < OLMCK_MAX_COLORS; ++n) {
         PF_SPRINTF(name, "Use Color %d", n + 1);
         AEFX_CLR_STRUCT(def);
-        PF_ADD_CHECKBOXX(name, 1, PF_ParamFlag_NONE, OLMCK_ID_SLOT_USE_COLOR + 3 * n);
+        PF_ADD_CHECKBOXX(name, 1, PF_ParamFlag_NONE, OLMCK_SlotIdUseColor(n));
 
         PF_SPRINTF(name, "Use Replace Color %d", n + 1);
         AEFX_CLR_STRUCT(def);
-        PF_ADD_CHECKBOXX(name, 0, PF_ParamFlag_NONE, OLMCK_ID_SLOT_USE_REPLACE + 3 * n);
+        PF_ADD_CHECKBOXX(name, 0, PF_ParamFlag_NONE, OLMCK_SlotIdUseReplace(n));
 
         PF_SPRINTF(name, "Color %d", n + 1);
         AEFX_CLR_STRUCT(def);
         def.flags = PF_ParamFlag_COLLAPSE_TWIRLY;
-        PF_ADD_COLOR(name, 0, 0, 0, OLMCK_ID_SLOT_COLOR + 5 * n);
+        PF_ADD_COLOR(name, 0, 0, 0, OLMCK_SlotIdColor(n));
 
         PF_SPRINTF(name, "Replace Color %d", n + 1);
         AEFX_CLR_STRUCT(def);
         def.flags = PF_ParamFlag_COLLAPSE_TWIRLY;
-        PF_ADD_COLOR(name, 0, 0, 0, OLMCK_ID_SLOT_REPLACE_COLOR + 3 * n);
+        PF_ADD_COLOR(name, 0, 0, 0, OLMCK_SlotIdReplaceColor(n));
 
         PF_SPRINTF(name, "Threshold %d", n + 1);
         AEFX_CLR_STRUCT(def);
         PF_ADD_FLOAT_SLIDERX(name, 0.0, 1.0, 0.0, 1.0, 0.0, 4,
                              PF_ValueDisplayFlag_NONE, PF_ParamFlag_COLLAPSE_TWIRLY,
-                             OLMCK_ID_SLOT_THRESHOLD + 5 * n);
+                             OLMCK_SlotIdThreshold(n));
 
         PF_SPRINTF(name, "Threshold(R,H,L,Y,Y) %d", n + 1);
         AEFX_CLR_STRUCT(def);
         PF_ADD_FLOAT_SLIDERX(name, 0.0, 1.0, 0.0, 1.0, 0.0, 4,
                              PF_ValueDisplayFlag_NONE, PF_ParamFlag_COLLAPSE_TWIRLY,
-                             OLMCK_ID_SLOT_THRESHOLD_R + 5 * n);
+                             OLMCK_SlotIdThresholdR(n));
 
         PF_SPRINTF(name, "Threshold(G,S,a,U,Cr) %d", n + 1);
         AEFX_CLR_STRUCT(def);
         PF_ADD_FLOAT_SLIDERX(name, 0.0, 1.0, 0.0, 1.0, 0.0, 4,
                              PF_ValueDisplayFlag_NONE, PF_ParamFlag_COLLAPSE_TWIRLY,
-                             OLMCK_ID_SLOT_THRESHOLD_G + 5 * n);
+                             OLMCK_SlotIdThresholdG(n));
 
         PF_SPRINTF(name, "Threshold(B,V,b,V,Cb) %d", n + 1);
         AEFX_CLR_STRUCT(def);
         PF_ADD_FLOAT_SLIDERX(name, 0.0, 1.0, 0.0, 1.0, 0.0, 4,
                              PF_ValueDisplayFlag_NONE, PF_ParamFlag_COLLAPSE_TWIRLY,
-                             OLMCK_ID_SLOT_THRESHOLD_B + 5 * n);
+                             OLMCK_SlotIdThresholdB(n));
     }
     (void)priv_err;
 
@@ -264,15 +268,15 @@ PF_Err CheckoutParams(PF_InData *in_data, PF_OutData *out_data, A_long bitdepth,
     OLMCK_READ(OLMCK_FORCE_PRECISION, p->force_precision = def.u.pd.value);
     OLMCK_READ(OLMCK_ENABLE_REPLACE, p->enable_replace = def.u.bd.value != 0);
 
-    // Explicit rejection before the slot loop: with a count above 25 the slot
+    // Explicit rejection before the slot loop: with a count above 200 the slot
     // parameters do not exist, and checking them out (even if a host permitted
     // it) would run past the arrays. Negative counts are not rejected: the binary
-    // (0x18000A370 loops only while count > 0) renders them with no colours (e2e).
+    // (0x18000A8E0 loops only while count > 0) renders them with no colours (e2e).
     if (p->count > OLMCK_MAX_COLORS) return PF_Err_BAD_CALLBACK_PARAM;
 
-    // The binary checks out every enabled slot; with count > 25 the slot
+    // The binary checks out every enabled slot; with count > 200 the slot
     // parameters do not exist and checkout fails, rejecting the render
-    // (0x18000A370 relies on the same failing id lookup).
+    // (0x18000A8E0 relies on the same failing id lookup: Use Color id 1624).
     for (int n = 0; n < (int)p->count; ++n) {
         const int base = OLMCK_SLOT_BASE + n * 8;
         AEFX_SuiteScoper<PF_ColorParamSuite1> color_suite(

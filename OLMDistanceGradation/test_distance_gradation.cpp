@@ -36,6 +36,7 @@ struct Host {
     PF_ParamDef params[OLMDG_NUM_PARAMS]{};
     PF_ParamDef *ptrs[OLMDG_NUM_PARAMS]{};
     int add_count = 0, checkouts = 0, checkins = 0, layer_out = 0, layer_in = 0;
+    PF_PreRenderOutput pout{};  // last PRE_RENDER output (result rect, flags)
     std::vector<std::pair<PF_ParamIndex, bool>> disabled;
     PF_ColorParamSuite1 color{};
     PF_ParamUtilsSuite3 utils3{};
@@ -140,6 +141,7 @@ PF_Err Render(Host &h) {
     pex.output = &pout;
     pex.cb = &pcb;
     PF_Err err = EffectMain(PF_Cmd_SMART_PRE_RENDER, &h.in, &h.out, nullptr, nullptr, &pex);
+    h.pout = pout;
     PF_SmartRenderInput rin{};
     PF_SmartRenderCallbacks rcb{};
     PF_SmartRenderExtra rex{};
@@ -228,16 +230,19 @@ void TestPrimitives() {
 void TestSetupUi() {
     Host h;
     Init(h, 8, 4, 4);
-    CHECK(h.out.num_params == 13 && h.add_count == 12, "13 params");
-    CHECK(h.out.my_version == 266752 && h.out.out_flags == 0x06000040 && h.out.out_flags2 == 0x08001400,
-          "version/flags");
+    CHECK(h.out.num_params == 14 && h.add_count == 13, "14 params (13 user + input)");
+    CHECK(h.out.my_version == 268288 && h.out.out_flags == 0x06000240 && h.out.out_flags2 == 0x08001400,
+          "version 0.8.3 DEVELOP / flags with I_EXPAND_BUFFER");
     const PF_ParamDef *p = h.params;
     bool ids = true;
-    for (int i = 1; i < 13; ++i) ids &= p[i].uu.id == i;
+    for (int i = 1; i < 14; ++i) ids &= p[i].uu.id == i;
     CHECK(ids, "ids == positions");
+    CHECK(p[13].param_type == PF_Param_CHECKBOX && p[13].u.bd.value == 0 && p[13].u.bd.dephault == 0 &&
+              !std::strcmp(p[13].PF_DEF_NAME, "Use Padding"),
+          "Use Padding checkbox, default off");
     CHECK(p[2].param_type == PF_Param_POPUP && p[2].u.pd.num_choices == 3 && p[2].u.pd.dephault == 0,
           "In/Out default 0 (binary)");
-    CHECK(p[3].u.sd.valid_max == 1000 && p[3].u.sd.slider_max == 512 && p[3].u.sd.dephault == 128, "Inside Threshold");
+    CHECK(p[3].u.sd.valid_max == 1000 && p[3].u.sd.slider_max == 1000 && p[3].u.sd.dephault == 128, "Inside Threshold");
     CHECK(p[7].u.cd.value.red == 255 && p[7].u.cd.value.green == 0 && p[7].u.cd.value.alpha == 255, "Gradation Color red");
     CHECK(!std::strcmp(p[8].PF_DEF_NAME, "BG Color "), "BG Color name (trailing space)");
     CHECK(p[9].u.pd.dephault == 2 && p[9].u.pd.num_choices == 4, "Interpolation default Linear");
@@ -247,7 +252,7 @@ void TestSetupUi() {
     CHECK(p[12].u.sd.valid_max == 4096 && p[12].u.sd.slider_max == 500 && p[12].flags == PF_ParamFlag_COLLAPSE_TWIRLY,
           "Blur Size");
     EffectMain(PF_Cmd_ABOUT, &h.in, &h.out, nullptr, nullptr, nullptr);
-    CHECK(!std::strcmp(h.out.return_msg, "DistanceGradation v0.82\rGenerate color gradation using distance transform."),
+    CHECK(!std::strcmp(h.out.return_msg, "DistanceGradation v0.83\rGenerate color gradation using distance transform."),
           "about");
 
     auto ui = [&](A_long inout, A_long interp, A_long render, A_long bg, A_long blur) {
@@ -258,7 +263,7 @@ void TestSetupUi() {
         h.params[OLMDG_BLUR_MODE].u.pd.value = blur;
         h.disabled.clear();
         EffectMain(PF_Cmd_UPDATE_PARAMS_UI, &h.in, &h.out, h.ptrs, nullptr, nullptr);
-        std::vector<int> st(13, -1);
+        std::vector<int> st(14, -1);
         for (auto &d : h.disabled) st[d.first] = d.second;
         return st;
     };
@@ -278,7 +283,7 @@ void TestRender(int depth) {
         Host h;
         Init(h, depth, 21, 21);
         Square(h, 3, 3, 18, 18);
-        h.params[OLMDG_INSIDE_THR].u.sd.value = 100;
+        h.params[OLMDG_INSIDE_THR].u.sd.value = 6;
         CHECK(Render(h) == PF_Err_NONE, "render");
         Px edge = Get(h, h.output, 3, 10), mid = Get(h, h.output, 7, 10), centre = Get(h, h.output, 10, 10);
         Px outside = Get(h, h.output, 1, 10);
@@ -286,8 +291,8 @@ void TestRender(int depth) {
         CHECK(centre.a <= tol, "deepest point fully faded");
         CHECK(std::fabs(edge.r - 1) <= tol && edge.g <= tol && edge.b <= tol, "RGB = gradation colour");
         CHECK(outside.a == 0, "transparent stays transparent (Inside)");
-        // Edge pixel: distance 1 of max 8 -> t = 1 - 1/8.
-        CHECK(std::fabs(edge.a - (1 - 1.0f / 8)) <= tol, "edge value = 1 - d/dmax");
+        // Edge pixel: distance 1 of threshold 6 -> t = 1 - 1/6 (normalise: min(d,T)/T).
+        CHECK(std::fabs(edge.a - (1 - 1.0f / 6)) <= tol, "edge value = 1 - d/T");
         CHECK(h.layer_out == h.layer_in && h.checkouts == h.checkins, "balanced");
 
         h.params[OLMDG_INVERT].u.bd.value = 1;
@@ -303,7 +308,7 @@ void TestRender(int depth) {
 
         // Sphere/Power reshape t; Layer mode takes input colour; BG blends.
         h.params[OLMDG_INTERP].u.pd.value = OLMDG_POWER_MODE;
-        h.params[OLMDG_INSIDE_THR].u.sd.value = 100;
+        h.params[OLMDG_INSIDE_THR].u.sd.value = 8;
         h.params[OLMDG_POWER].u.fs_d.value = 2;
         h.params[OLMDG_RENDER_MODE].u.pd.value = OLMDG_RENDER_LAYER;
         Render(h);
@@ -336,7 +341,7 @@ void TestRender(int depth) {
               "outside gradient capped at threshold");
         // Both = inside + outside gradations.
         h.params[OLMDG_IN_OUT].u.pd.value = OLMDG_BOTH;
-        h.params[OLMDG_INSIDE_THR].u.sd.value = 100;
+        h.params[OLMDG_INSIDE_THR].u.sd.value = 3;
         Render(h);
         CHECK(Get(h, h.output, 9, 4).a > 0 && Get(h, h.output, 7, 4).a > 0 && Get(h, h.output, 10, 4).a == 0,
               "Both covers inside and outside; deepest point fades");
@@ -394,12 +399,52 @@ void TestRender(int depth) {
     }
 }
 
+// 0.8.3 Use Padding: PRE_RENDER grows the result rect by the pad and flags
+// RETURNS_EXTRA_PIXELS; SMART_RENDER writes the padded canvas top-left into an output
+// world sized from that rect, with the input at (pad_x, pad_y).
+void TestPadding(int depth) {
+    const float tol = depth == 8 ? 2.5f / 255 : depth == 16 ? 2e-4f : 1e-5f;
+    {
+        Host h;
+        Init(h, depth, 21, 9);
+        Square(h, 8, 0, 13, 9);
+        h.params[OLMDG_IN_OUT].u.pd.value = OLMDG_OUTSIDE;
+        h.params[OLMDG_OUTSIDE_THR].u.sd.value = 4;
+        Render(h);
+        const PF_LRect &r = h.pout.result_rect;
+        CHECK(r.left == 0 && r.top == 0 && r.right == 21 && r.bottom == 9, "padding off: rect unchanged");
+        CHECK((h.pout.flags & PF_RenderOutputFlag_RETURNS_EXTRA_PIXELS) != 0, "RETURNS_EXTRA_PIXELS flagged");
+    }
+    {
+        Host h;
+        Init(h, depth, 21, 9);
+        Square(h, 8, 0, 13, 9);
+        h.params[OLMDG_IN_OUT].u.pd.value = OLMDG_OUTSIDE;
+        h.params[OLMDG_OUTSIDE_THR].u.sd.value = 4;
+        h.params[OLMDG_PADDING].u.bd.value = 1;
+        SetWorld(h.output, h.out_bytes, 29, 17, depth);  // r = max(1, 4) = 4 -> pad 4 per side
+        Render(h);
+        const PF_LRect &r = h.pout.result_rect;
+        CHECK(r.left == -4 && r.top == -4 && r.right == 25 && r.bottom == 13, "padding 4: result rect grown");
+        CHECK(h.pout.max_result_rect.left == -4 && h.pout.max_result_rect.bottom == 13, "padding 4: max rect grown");
+        CHECK((h.pout.flags & PF_RenderOutputFlag_RETURNS_EXTRA_PIXELS) != 0, "padding: flag set");
+        // Output (x, y) = input (x - 4, y - 4): input x=7 is output x=11.
+        CHECK(std::fabs(Get(h, h.output, 11, 8).a - 0.75f) <= tol, "gradient reaches the input edge");
+        CHECK(Get(h, h.output, 4 + 8, 4 + 2).a == 0, "shape interior transparent (Outside)");
+        CHECK(Get(h, h.output, 0, 8).a <= tol, "padding beyond the threshold is transparent");
+        CHECK(Get(h, h.output, 4, 8).a <= tol, "input x=0 is 8 px from the shape: beyond threshold");
+    }
+}
+
 }  // namespace
 
 int main() {
     TestPrimitives();
     TestSetupUi();
-    for (int d : {8, 16, 32}) TestRender(d);
+    for (int d : {8, 16, 32}) {
+        TestRender(d);
+        TestPadding(d);
+    }
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

@@ -17,11 +17,11 @@
 #define OLMCK_CATEGORY    "OLM Plug-ins"
 #define OLMCK_PIPL_NAME   "OLM Color Key"
 #define OLMCK_MATCH_NAME  "OLM Color Key"
-#define OLMCK_ABOUT       "OLM Color Key 2.3.1\rKey or Keep the selected color from the source.\rCopyright 2014 OLM Digital, Inc."
+#define OLMCK_ABOUT       "OLM Color Key 2.3.3\rKey or Keep the selected color from the source.\rCopyright 2014 OLM Digital, Inc."
 
 #define OLMCK_MAJOR_VERSION 2
 #define OLMCK_MINOR_VERSION 3
-#define OLMCK_BUG_VERSION   1
+#define OLMCK_BUG_VERSION   3
 
 // PF_ParamDef.uu.id values from the Windows binary. Parameter checkout /
 // PF_UpdateParamUI / AEGP stream APIs take the separate zero-based position
@@ -49,17 +49,20 @@ enum OLMCK_ParamId {
     OLMCK_ID_BLUR_DIRECTION = 19,
     OLMCK_ID_BLUR_GROUP_END = 16, // duplicate id in the binary; positions differ
     OLMCK_ID_COLOR_COUNT = 21,
-    OLMCK_ID_ENABLE_REPLACE = 523,
-    // Slot n (0..24):
-    OLMCK_ID_SLOT_USE_COLOR = 524,       // 524 + 3n
-    OLMCK_ID_SLOT_USE_REPLACE = 525,     // 525 + 3n
-    OLMCK_ID_SLOT_COLOR = 22,            // 22 + 5n
-    OLMCK_ID_SLOT_REPLACE_COLOR = 526,   // 526 + 3n
-    OLMCK_ID_SLOT_THRESHOLD = 23,        // 23 + 5n
-    OLMCK_ID_SLOT_THRESHOLD_R = 24,      // 24 + 5n
-    OLMCK_ID_SLOT_THRESHOLD_G = 25,      // 25 + 5n
-    OLMCK_ID_SLOT_THRESHOLD_B = 26       // 26 + 5n
+    OLMCK_ID_ENABLE_REPLACE = 523
 };
+
+// Slot n (0..OLMCK_MAX_COLORS-1) uu.id values, binary-exact for 2.3.3. The binary
+// (setup 0x180001000, checkout 0x18000A8E0, UI 0x180001D90) uses two blocks:
+// slots 0..99 and 100..199. Positions are sequential (24 + 8n) in both blocks.
+constexpr int OLMCK_SlotIdUseColor(int n) { return n < 100 ? 524 + 3 * n : 1024 + 3 * n; }
+constexpr int OLMCK_SlotIdUseReplace(int n) { return n < 100 ? 525 + 3 * n : 1025 + 3 * n; }
+constexpr int OLMCK_SlotIdReplaceColor(int n) { return n < 100 ? 526 + 3 * n : 1026 + 3 * n; }
+constexpr int OLMCK_SlotIdColor(int n) { return n < 100 ? 22 + 5 * n : 324 + 5 * n; }
+constexpr int OLMCK_SlotIdThreshold(int n) { return n < 100 ? 23 + 5 * n : 325 + 5 * n; }
+constexpr int OLMCK_SlotIdThresholdR(int n) { return n < 100 ? 24 + 5 * n : 326 + 5 * n; }
+constexpr int OLMCK_SlotIdThresholdG(int n) { return n < 100 ? 25 + 5 * n : 327 + 5 * n; }
+constexpr int OLMCK_SlotIdThresholdB(int n) { return n < 100 ? 26 + 5 * n : 328 + 5 * n; }
 
 // params[0] is the input layer. These are parameter positions, not uu.id.
 enum OLMCK_ParamPosition {
@@ -87,12 +90,12 @@ enum OLMCK_ParamPosition {
     OLMCK_BLUR_GROUP_END = 21,
     OLMCK_COLOR_COUNT = 22,
     OLMCK_ENABLE_REPLACE = 23,
-    // Slot n (0..24) occupies 8 consecutive positions starting at 24 + 8n:
+    // Slot n (0..199) occupies 8 consecutive positions starting at 24 + 8n:
     OLMCK_SLOT_BASE = 24
 };
 
-constexpr int OLMCK_MAX_COLORS = 25;
-constexpr int OLMCK_NUM_PARAMS = OLMCK_SLOT_BASE + OLMCK_MAX_COLORS * 8; // 224
+constexpr int OLMCK_MAX_COLORS = 200;
+constexpr int OLMCK_NUM_PARAMS = OLMCK_SLOT_BASE + OLMCK_MAX_COLORS * 8; // 1624
 
 enum OLMCK_PopupValue {
     OLMCK_SPACE_RGB = 1,

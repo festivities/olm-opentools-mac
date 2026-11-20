@@ -1,4 +1,7 @@
-/* OLMSmoother2: macOS SmartRender port of the Windows OLM Smoother v2 2.1.
+/* OLMSmoother2: macOS SmartRender port of the Windows OLM Smoother v2 2.2
+ * (2026-11-20 binary; 2.2 deltas: Oklab color space, float Smooth Range,
+ * Smoother Version popup with 3 items, UPDATE_PARAMS_UI truth table).
+ * Addresses below are the 2.1 binary unless marked "2.2".
  *
  * Every stage below follows the decompiled Windows binary
  * (entry 0x180009F10, setup 0x180001940, ctx build 0x180004E10, UI
@@ -38,6 +41,13 @@
 
 #include "OLMSmoother2.h"
 
+// Oklab and the blend chain depend on the exact float grouping the binary was
+// compiled with; Apple clang would otherwise fuse a*b+c into FMA (ISO
+// -ffp-contract=on). MinGW/GCC on x86-64 does not contract without -mfma.
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -55,7 +65,7 @@ constexpr float kLumaR = 0.21259999f;
 constexpr float kLumaB = 0.0722f;
 
 static_assert(PF_VERSION(OLMS2_MAJOR_VERSION, OLMS2_MINOR_VERSION,
-                          OLMS2_BUG_VERSION, PF_Stage_DEVELOP, 0) == 1081344,
+                          OLMS2_BUG_VERSION, PF_Stage_DEVELOP, 0) == 1114112,
               "Smoother2 version must match its PiPL");
 
 AEGP_PluginID g_aegp_id = 0;
@@ -113,11 +123,16 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data) {
     PF_ADD_SLIDER("Extra Smooth", 0, 100, 0, 100, 0, OLMS2_ID_EXTRA_SMOOTH);
 
     AEFX_CLR_STRUCT(def);
-    PF_ADD_SLIDER("Smooth Range", 0, 100, 0, 100, 2, OLMS2_ID_SMOOTH_RANGE);
-
+    // 2.2: Smooth Range is PF_Param_FLOAT_SLIDER (0x180007A30 with type 10), default 2.0,
+    // range 0..100, precision 1, no flags (0x180001C30).
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUPX("Smoother Version", 2, 2, "v1|v2", PF_ParamFlag_NONE,
-                  OLMS2_ID_VERSION);
+    PF_ADD_FLOAT_SLIDERX("Smooth Range", 0, 100, 0, 100, 2, 1, PF_ValueDisplayFlag_NONE,
+                         PF_ParamFlag_NONE, OLMS2_ID_SMOOTH_RANGE);
+
+    // 2.2: third item "v2 (Oklab)" and SUPERVISE (flag 64) so UPDATE_PARAMS_UI runs.
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_POPUPX("Smoother Version", 3, 2, "v1 (sRGB)|v2 (Linear)|v2 (Oklab)",
+                  PF_ParamFlag_SUPERVISE, OLMS2_ID_VERSION);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_POPUPX("Gamma Correction", 3, OLMS2_GAMMA_NONE, "None|Gamma Colors|All Colors",
@@ -142,7 +157,7 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data) {
     return PF_Err_NONE;
 }
 
-// --- UPDATE_PARAMS_UI (0x1800023A0 + 0x180005DE0/5FA0) -----------------------
+// --- UPDATE_PARAMS_UI (2.2: 0x1800023B0 + 0x180006CB0/0x180006E70) ----------
 
 PF_Err SetParamDisabled(AEFX_SuiteScoper<PF_ParamUtilsSuite3> &suite,
                         PF_InData *in_data, PF_ParamIndex position,
@@ -176,26 +191,36 @@ PF_Err UpdateParamsUI(PF_InData *in_data, PF_OutData *out_data, PF_ParamDef *par
 
     const bool enable_off = !(params[OLMS2_ENABLE_KEY] &&
                               params[OLMS2_ENABLE_KEY]->u.bd.value != 0);
+    // Smoother Version popup value 3 = v2 (Oklab) (binary: checkout index 2).
+    const bool oklab = params[OLMS2_VERSION] && params[OLMS2_VERSION]->u.pd.value == 3;
     const A_long mode = params[OLMS2_GAMMA_MODE] ? params[OLMS2_GAMMA_MODE]->u.pd.value : 1;
     const A_long count = params[OLMS2_GAMMA_COUNT] ? params[OLMS2_GAMMA_COUNT]->u.sd.value : 0;
 
     AEFX_SuiteScoper<PF_ParamUtilsSuite3> param_utils(
         in_data, kPFParamUtilsSuite, kPFParamUtilsSuiteVersion3, out_data);
 
-    // Disable truth table (0x1800023A0): Color Key (pos 2) and Invert (pos 3)
-    // when Enable is off; Gamma Value when mode == None; Count when
-    // mode != Gamma Colors.
+    // Disable table of 2.2 (0x1800023B0), same call order as the binary:
+    //   Color Key, Invert            <- Enable off
+    //   Gamma Correction             <- Oklab
+    //   Gamma Value                  <- Oklab, then (Oklab || None)  (binary calls id 8 twice)
+    //   Number of Gamma Colors       <- Oklab || mode != Gamma Colors
     PF_Err err = SetParamDisabled(param_utils, in_data, OLMS2_KEY_COLOR,
                                   params[OLMS2_KEY_COLOR], enable_off);
     if (!err) err = SetParamDisabled(param_utils, in_data, OLMS2_INVERT_KEY,
                                      params[OLMS2_INVERT_KEY], enable_off);
+    if (!err) err = SetParamDisabled(param_utils, in_data, OLMS2_GAMMA_MODE,
+                                     params[OLMS2_GAMMA_MODE], oklab);
     if (!err) err = SetParamDisabled(param_utils, in_data, OLMS2_GAMMA_VALUE,
-                                     params[OLMS2_GAMMA_VALUE], mode == OLMS2_GAMMA_NONE);
+                                     params[OLMS2_GAMMA_VALUE], oklab);
+    if (!err) err = SetParamDisabled(param_utils, in_data, OLMS2_GAMMA_VALUE,
+                                     params[OLMS2_GAMMA_VALUE],
+                                     oklab || mode == OLMS2_GAMMA_NONE);
     if (!err) err = SetParamDisabled(param_utils, in_data, OLMS2_GAMMA_COUNT,
-                                     params[OLMS2_GAMMA_COUNT], mode != OLMS2_GAMMA_COLORS);
+                                     params[OLMS2_GAMMA_COUNT],
+                                     oklab || mode != OLMS2_GAMMA_COLORS);
 
-    // Hide the gamma pickers (0x180005FA0): visible iff mode == Gamma Colors
-    // and i < count.
+    // Hide the gamma pickers (0x180006E70): visible iff not Oklab, mode == Gamma
+    // Colors and i < count.
     if (!err) {
         AEGP_SuiteHandler suites(in_data->pica_basicP);
         AEGP_LayerH layerH = nullptr;
@@ -210,7 +235,7 @@ PF_Err UpdateParamsUI(PF_InData *in_data, PF_OutData *out_data, PF_ParamDef *par
         }
         for (int i = 0; i < OLMS2_MAX_GAMMA_COLORS && !err; ++i) {
             err = SetStreamVisible(suites, effectH, OLMS2_GAMMA_COLOR_0 + i,
-                                   mode == OLMS2_GAMMA_COLORS && i < count);
+                                   !oklab && mode == OLMS2_GAMMA_COLORS && i < count);
         }
         suites.EffectSuite5()->AEGP_DisposeEffect(effectH);
     }
@@ -245,11 +270,21 @@ PF_Err CheckoutParams(PF_InData *in_data, PF_OutData *out_data, A_long bitdepth,
     OLMS2_READ(OLMS2_INVERT_KEY, p->invert_key = def.u.bd.value != 0);
     OLMS2_READ(OLMS2_SMOOTHNESS, p->smoothness = def.u.sd.value);
     OLMS2_READ(OLMS2_EXTRA_SMOOTH, p->extra_smooth = def.u.sd.value);
-    OLMS2_READ(OLMS2_SMOOTH_RANGE, p->smooth_range = def.u.sd.value);
-    OLMS2_READ(OLMS2_VERSION, p->v1 = def.u.pd.value == 1);
-    OLMS2_READ(OLMS2_GAMMA_MODE, p->gamma_mode = def.u.pd.value);
-    OLMS2_READ(OLMS2_GAMMA_VALUE, p->gamma_value = (float)def.u.fs_d.value);
-    OLMS2_READ(OLMS2_GAMMA_COUNT, p->gamma_count = def.u.sd.value);
+    // 2.2 float slider: (float)value * 0.01f (0x180001500 then *0.01f, 0x180005C60).
+    OLMS2_READ(OLMS2_SMOOTH_RANGE, p->smooth_threshold = (float)def.u.fs_d.value * 0.01f);
+    // Popup 1/2/3 -> 0/1/2 (0x180005C60 switch; the binary aborts on other values).
+    OLMS2_READ(OLMS2_VERSION, p->version = def.u.pd.value - 1);
+    if (p->version < OLMS2_V1_SRGB || p->version > OLMS2_V2_OKLAB)
+        return PF_Err_BAD_CALLBACK_PARAM;
+    if (p->version == OLMS2_V2_OKLAB) {
+        // Oklab returns before reading Gamma Correction (0x180005C60 "v >= 2"):
+        // gamma is off and the gamma inputs are not read.
+        p->gamma_mode = OLMS2_GAMMA_NONE;
+    } else {
+        OLMS2_READ(OLMS2_GAMMA_MODE, p->gamma_mode = def.u.pd.value);
+        OLMS2_READ(OLMS2_GAMMA_VALUE, p->gamma_value = (float)def.u.fs_d.value);
+        OLMS2_READ(OLMS2_GAMMA_COUNT, p->gamma_count = def.u.sd.value);
+    }
 
     if (p->enable_key) {
         AEFX_SuiteScoper<PF_ColorParamSuite1> color_suite(
@@ -501,8 +536,46 @@ void ApplyKey(CanvasDesc &c, const OLMS2Params &p) {
     }
 }
 
-void ApplyGammaDecode(CanvasDesc &c, const OLMS2Params &p) {
-    if (p.v1) return;
+// 0x180005520: linear RGB -> Oklab (float math, cbrtf; grouping as compiled).
+// Writes out = {L, a, b, alpha}; out may alias in.
+// The binary calls the Windows UCRT cbrtf, which is not correctly rounded; Apple's
+// libm differs by 1 ULP on about two thirds of inputs. OLMS2_CBRT is a test hook:
+// the Windows harness routes it to ucrtbase cbrtf (bit-exact with the binary).
+#ifndef OLMS2_CBRT
+#define OLMS2_CBRT(x) std::cbrt(x)
+#endif
+void LinearToOklab(const float *in, float *out) {
+    const float r = in[0], g = in[1], b = in[2], alpha = in[3];
+    const float l = OLMS2_CBRT((g * 0.53633255f + r * 0.41222146f) + b * 0.051445995f);
+    const float m = OLMS2_CBRT((r * 0.2119035f + g * 0.6806995f) + b * 0.10739696f);
+    const float s = OLMS2_CBRT((r * 0.08830246f + g * 0.28171885f) + b * 0.6299787f);
+    out[0] = (l * 0.21045426f + m * 0.7936178f) - s * 0.004072047f;
+    out[1] = (l * 1.9779985f - m * 2.4285922f) + s * 0.4505937f;
+    out[2] = (m * 0.78277177f + l * 0.025904037f) - s * 0.80867577f;
+    out[3] = alpha;
+}
+
+// 0x180005840: Oklab -> linear RGB (cubes of the LMS' terms). out may alias in.
+void OklabToLinear(const float *in, float *out) {
+    const float L = in[0], a = in[1], b = in[2], alpha = in[3];
+    const float lp = ((a * 0.39633778f) + L) + b * 0.21580376f;
+    const float mp = (L - a * 0.105561346f) - b * 0.06385417f;
+    const float sp = (L - a * 0.08948418f) - b * 1.2914855f;
+    const float l = (lp * lp) * lp;
+    const float m = (mp * mp) * mp;
+    const float s = (sp * sp) * sp;
+    out[0] = ((l * 4.0767417f) - (m * 3.3077116f)) + s * 0.23096994f;
+    out[1] = ((m * 2.6097574f) - (l * 1.268438f)) - s * 0.34131938f;
+    out[2] = (s * 1.7076147f) - ((l * 0.0041960864f) + m * 0.7034186f);
+    out[3] = alpha;
+}
+
+// Canvas colour space prep, after the key. v1 stays sRGB. v2 (Linear) decodes
+// sRGB -> linear with the LUT. v2 (Oklab) also converts linear -> Oklab, and the
+// canvas then holds Oklab {L,a,b,A} for the whole MLAA/blend chain. Binary
+// converter table 0x180003920: row = canvas space, col = output space.
+void ApplyColorSpace(CanvasDesc &c, const OLMS2Params &p) {
+    if (p.version == OLMS2_V1_SRGB) return;
     BuildLuts();
     for (int y = 0; y < c.h; ++y) {
         for (int x = 0; x < c.w; ++x) {
@@ -510,6 +583,7 @@ void ApplyGammaDecode(CanvasDesc &c, const OLMS2Params &p) {
             px[0] = SrgbDecode(px[0]);
             px[1] = SrgbDecode(px[1]);
             px[2] = SrgbDecode(px[2]);
+            if (p.version == OLMS2_V2_OKLAB) LinearToOklab(px, px);
         }
     }
 }
@@ -530,8 +604,10 @@ float EdgeDistance(const float *a, const float *b) {
 
 // --- Edge map build (0x18000AED0) --------------------------------------------
 
-void BuildEdges(const CanvasDesc &c, EdgeDesc &e, int smooth_range) {
-    const float thr = (float)((double)(float)smooth_range / 100.0) + 0.001f;
+// smooth_threshold = float(Smooth Range) * 0.01f (ctx+40); the test adds 0.001f
+// (0x18000C1D0: addss xmm4, dword_180023ECC).
+void BuildEdges(const CanvasDesc &c, EdgeDesc &e, float smooth_threshold) {
+    const float thr = smooth_threshold + 0.001f;
     for (int y = 0; y < c.h; ++y) {
         for (int x = 0; x < c.w; ++x) {
             const float *p = c.Pixel(x, y);
@@ -540,7 +616,9 @@ void BuildEdges(const CanvasDesc &c, EdgeDesc &e, int smooth_range) {
             if (y >= 1) {
                 b1 = EdgeDistance(p, c.Pixel(x, y - 1)) >= thr;
                 if (x >= 1) b2 = EdgeDistance(p, c.Pixel(x - 1, y - 1)) >= thr;
-                if (x + 1 < c.w - 1) b3 = EdgeDistance(p, c.Pixel(x + 1, y - 1)) >= thr;
+                // 2.2 (0x18000C1D0, cmp x, W-1; jge): up-right is tested when x < W-1
+                // (x+1 < W). The 2.1 binary (0x18000AED0) used x+1 < W-1.
+                if (x + 1 < c.w) b3 = EdgeDistance(p, c.Pixel(x + 1, y - 1)) >= thr;
             }
             A_u_char *out = e.data + (size_t)e.stride * (size_t)y + (size_t)x * 4;
             // Binary negates the presence flag: present -> 0xFF, absent -> 0.
@@ -2820,8 +2898,9 @@ void BlendMix(const float *pixel, const float samples[][5], int count, float *ou
     }
 }
 
-// 0x18000B1E0: unpremultiply, gamma-decode (double pow), clamp.
-void BlendFinish(float *v, float gamma, bool apply) {
+// 0x18000B1E0: unpremultiply, gamma-decode (double pow), clamp. Oklab canvas
+// values are not clamped here (a/b are signed); the writer clamps after sRGB encode.
+void BlendFinish(float *v, float gamma, bool apply, bool clamp_rgb) {
     const float a = v[3];
     if (a != 0.0f && a != 1.0f) {
         for (int i = 0; i < 3; ++i) v[i] /= a;
@@ -2832,21 +2911,41 @@ void BlendFinish(float *v, float gamma, bool apply) {
     }
     // Clamp as the binary does (probed on 0x18000B1E0): x < 0 -> 0, else MSVC
     // fminf(1, x), which passes NaN through (-0 and NaN are kept, +inf -> 1).
-    for (int i = 0; i < 3; ++i) v[i] = (v[i] < 0.0f) ? 0.0f : ((1.0f < v[i]) ? 1.0f : v[i]);
+    if (clamp_rgb) {
+        for (int i = 0; i < 3; ++i) v[i] = (v[i] < 0.0f) ? 0.0f : ((1.0f < v[i]) ? 1.0f : v[i]);
+    }
     v[3] = (a < 0.0f) ? 0.0f : ((1.0f < a) ? 1.0f : a);
 }
+
+// Writer clamp of 0x180003920 for the sRGB output: x >= 0 ? fminf(x, 1) : 0.
+float WriterClamp(float x) { return (x >= 0.0f) ? std::min(x, 1.0f) : 0.0f; }
 
 // --- Per-pixel glue (0x18000CDA0) + writers (0x180003370/36E0/3990) ----------
 
 void WritePixel(const OLMS2Params &p, const float *rgba, int depth, PF_EffectWorld &out,
                 int x, int y) {
     float r = rgba[0], g = rgba[1], b = rgba[2], a = rgba[3];
-    if (!p.v1) {
+    if (p.version == OLMS2_V2_OKLAB) {
+        // Oklab -> linear (0x180005840) -> sRGB encode (LUT).
+        const float ok[4] = {r, g, b, a};
+        float lin[4];
+        OklabToLinear(ok, lin);
+        r = SrgbEncode(lin[0]);
+        g = SrgbEncode(lin[1]);
+        b = SrgbEncode(lin[2]);
+    } else if (p.version != OLMS2_V1_SRGB) {
         r = SrgbEncode(r);
         g = SrgbEncode(g);
         b = SrgbEncode(b);
     }
-    // Dead premultiply-on-output flag (ctx byte 25) is always 0 -> skipped.
+    // 2.2 writer (0x180003920): every sRGB output channel, alpha included, is
+    // clamped as x >= 0 ? fminf(x, 1) : 0 before quantization. This also covers
+    // out-of-range float input that reaches the no-sample path unchanged.
+    r = WriterClamp(r);
+    g = WriterClamp(g);
+    b = WriterClamp(b);
+    a = WriterClamp(a);
+    // Dead premultiply-on-output flag (writer byte a8+29) is always 0 -> skipped.
     if (depth == 8) {
         PF_Pixel *o = (PF_Pixel *)((char *)out.data + (size_t)out.rowbytes * (size_t)y +
                                    (size_t)x * 4);
@@ -2896,7 +2995,7 @@ void ProcessPixel(const OLMS2Params &p, const GammaInfo &gi, const CanvasDesc &c
         BlendEncodePremul(work, c.samples, c.count, gamma, apply);
         float mixed[4];
         BlendMix(work, c.samples, c.count, mixed);
-        BlendFinish(mixed, gamma, apply);
+        BlendFinish(mixed, gamma, apply, p.version != OLMS2_V2_OKLAB);
         result[0] = mixed[0];
         result[1] = mixed[1];
         result[2] = mixed[2];
@@ -2968,15 +3067,15 @@ PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data, PF_SmartRenderExtra
                             break;
                     }
                     ApplyKey(canvas, params);
-                    ApplyGammaDecode(canvas, params);
-                    BuildEdges(canvas, edge, params.smooth_range);
+                    ApplyColorSpace(canvas, params);
+                    BuildEdges(canvas, edge, params.smooth_threshold);
 
                     GammaInfo gi;
                     gi.colors = params.gamma_colors;
                     gi.count = params.gamma_mode == OLMS2_GAMMA_COLORS
                                    ? params.gamma_count
                                    : 0;
-                    gi.encode = !params.v1;
+                    gi.encode = params.version != OLMS2_V1_SRGB;
                     if (gi.encode) BuildLuts();
 
                     for (A_long y = 0; y < height && !err; ++y) {

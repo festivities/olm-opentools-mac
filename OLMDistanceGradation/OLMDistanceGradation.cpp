@@ -1,17 +1,17 @@
 /* OLMDistanceGradation: macOS SmartRender port of the Windows OLM Distance
- * Gradation 0.8.2 (DistanceGradation.aex). The binary statically links
+ * Gradation 0.8.3 (DistanceGradation-20261120.aex). The binary statically links
  * OpenCV 4.5.5 and drives it through the old C API; the handful of routines
  * it uses are reimplemented below following OpenCV's arithmetic.
  *
- * Binary map: entry 0x181174BC0, params 0x181173720, UI 0x181174190 ->
- * 0x1811743A0 (+ disable helper 0x181174050), smart render 0x181173D10,
- * compute 0x181171D00 (8) / 0x181170FF0 (16) / 0x181172A10 (32), mask
- * 0x181174990, invert 0x181174AC0, gradation 0x181174750, composite pixel
- * functions 0x181170870 (8) / 0x181170480 (16) / 0x181170C90 (32).
- * OpenCV callees: cvSplit 0x18117CC30, cvConvertScale 0x18117C570,
- * cvThreshold 0x1812B6A30, cvResize 0x1812AEF60, cvDistTransform 0x1812B1590,
- * cvNormalize 0x18117CA40, cvAdd 0x181182B10, cvCountNonZero 0x181182FF0,
- * cvSmooth 0x1812864C0, cvMerge 0x18117C6D0. */
+ * Binary map (0.8.3): entry 0x1811755A0, params 0x181173CC0, UI 0x181174B20 ->
+ * 0x181174D30 (+ helper 0x1811749E0), pre-render 0x181174320, smart render
+ * 0x181174680, compute 0x181171F20 (8) / 0x181171050 (16) / 0x181172DF0 (32),
+ * mask 0x181175370, invert 0x1811754A0, gradation 0x1811750E0, composite pixel
+ * functions 0x181170880 (8) / 0x181170460 (16) / 0x181170CC0 (32).
+ * OpenCV callees: cvCopyMakeBorder 0x181275EC0, cvSplit/cvCopy 0x18117C530,
+ * cvConvert 0x18117CE10, cvThreshold 0x1812B7380, cvResize 0x1812AF8B0,
+ * cvDistTransform 0x1812B1EE0, cvNormalize 0x18117D2E0, cvCountNonZero 0x181183650,
+ * cvSmooth 0x181286E10, cvMerge 0x18117CF70. */
 
 #include "OLMDistanceGradation.h"
 
@@ -25,7 +25,7 @@
 namespace {
 
 static_assert(PF_VERSION(OLMDG_MAJOR_VERSION, OLMDG_MINOR_VERSION, OLMDG_BUG_VERSION,
-                         PF_Stage_ALPHA, 0) == 266752,
+                         PF_Stage_DEVELOP, 0) == 268288,
               "DistanceGradation version must match its PiPL");
 
 PF_Err About(PF_InData *in_data, PF_OutData *out_data) {
@@ -35,9 +35,9 @@ PF_Err About(PF_InData *in_data, PF_OutData *out_data) {
 
 PF_Err GlobalSetup(PF_OutData *out_data) {
     out_data->my_version = PF_VERSION(OLMDG_MAJOR_VERSION, OLMDG_MINOR_VERSION,
-                                      OLMDG_BUG_VERSION, PF_Stage_ALPHA, 0);
+                                      OLMDG_BUG_VERSION, PF_Stage_DEVELOP, 0);
     out_data->out_flags = PF_OutFlag_USE_OUTPUT_EXTENT | PF_OutFlag_DEEP_COLOR_AWARE |
-                          PF_OutFlag_SEND_UPDATE_PARAMS_UI;
+                          PF_OutFlag_SEND_UPDATE_PARAMS_UI | PF_OutFlag_I_EXPAND_BUFFER;
     out_data->out_flags2 = PF_OutFlag2_SUPPORTS_SMART_RENDER |
                            PF_OutFlag2_FLOAT_COLOR_AWARE |
                            PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
@@ -77,9 +77,9 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data) {
     if (!err) err = AddPopup(in_data, "In/Out", 3, 0, "Inside|Outside|Both", OLMDG_IN_OUT);
     if (err) return err;
     AEFX_CLR_STRUCT(def);
-    PF_ADD_SLIDER("Inside Threshold", 0, 1000, 0, 512, 128, OLMDG_INSIDE_THR);
+    PF_ADD_SLIDER("Inside Threshold", 0, 1000, 0, 1000, 128, OLMDG_INSIDE_THR);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_SLIDER("Outside Threshold", 0, 1000, 0, 512, 128, OLMDG_OUTSIDE_THR);
+    PF_ADD_SLIDER("Outside Threshold", 0, 1000, 0, 1000, 128, OLMDG_OUTSIDE_THR);
     err = AddPopup(in_data, "Render Mode", 2, 1, "RGB|Layer", OLMDG_RENDER_MODE);
     if (!err) err = AddCheckbox(in_data, "Use Background Color", OLMDG_USE_BG);
     if (err) return err;
@@ -100,11 +100,13 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data) {
     AEFX_CLR_STRUCT(def);
     def.flags = PF_ParamFlag_COLLAPSE_TWIRLY;
     PF_ADD_SLIDER("Blur Size", 0, 4096, 0, 500, 0, OLMDG_BLUR_SIZE);
+    err = AddCheckbox(in_data, "Use Padding", OLMDG_PADDING);
+    if (err) return err;
     out_data->num_params = OLMDG_NUM_PARAMS;
     return PF_Err_NONE;
 }
 
-// --- UPDATE_PARAMS_UI (0x1811743A0) -------------------------------------------
+// --- UPDATE_PARAMS_UI (0x181174D30) -------------------------------------------
 
 PF_Err SetDisabled(AEFX_SuiteScoper<PF_ParamUtilsSuite3> &suite, PF_InData *in_data,
                    PF_ParamDef *params[], PF_ParamIndex index, bool disabled) {
@@ -137,18 +139,77 @@ PF_Err UpdateParamsUI(PF_InData *in_data, PF_OutData *out_data, PF_ParamDef *par
     return err;
 }
 
-PF_Err PreRender(PF_InData *in_data, PF_PreRenderExtra *extra) {
-    PF_CheckoutResult result;
-    AEFX_CLR_STRUCT(result);
-    PF_RenderRequest request = extra->input->output_request;
-    PF_Err err = extra->cb->checkout_layer(in_data->effect_ref, OLMDG_INPUT, 0, &request,
-                                           in_data->current_time, in_data->time_step,
-                                           in_data->time_scale, &result);
+// Padding of the layer canvas (0.8.3 pre-render 0x181174320 and compute 0x181171F20).
+// r is in full-resolution pixels; px/py are the layer-resolution pads on each side.
+struct Pad {
+    A_long r, px, py;
+};
+
+Pad ComputePad(const PF_InData *in_data, bool use_padding, A_long in_out, A_long outside_thr) {
+    Pad pd{0, 0, 0};
+    if (use_padding) {
+        pd.r = (A_long)((float)in_data->downsample_y.den / (float)in_data->downsample_y.num);
+        if ((in_out == OLMDG_OUTSIDE || in_out == OLMDG_BOTH) && outside_thr > pd.r)
+            pd.r = outside_thr;
+    }
+    pd.px = (A_long)((float)(in_data->downsample_x.num * pd.r) / (float)in_data->downsample_x.den);
+    pd.py = (A_long)((float)(in_data->downsample_y.num * pd.r) / (float)in_data->downsample_y.den);
+    return pd;
+}
+
+// Checks out one parameter, lets `read` pick its value, and checks it back in.
+template <typename Fn>
+PF_Err WithParam(PF_InData *in_data, A_long index, Fn read) {
+    PF_ParamDef def;
+    AEFX_CLR_STRUCT(def);
+    PF_Err err = PF_CHECKOUT_PARAM(in_data, index, in_data->current_time, in_data->time_step,
+                                   in_data->time_scale, &def);
     if (!err) {
-        UnionLRect(&result.result_rect, &extra->output->result_rect);
-        UnionLRect(&result.max_result_rect, &extra->output->max_result_rect);
+        read(def);
+        const PF_Err checkin_err = PF_CHECKIN_PARAM(in_data, &def);
+        if (!err) err = checkin_err;
     }
     return err;
+}
+
+// PRE_RENDER (0x181174320): pads the result rect by the Use Padding amount and
+// flags RETURNS_EXTRA_PIXELS. The request's preserve_rgb_of_zero_alpha is cleared.
+PF_Err PreRender(PF_InData *in_data, PF_PreRenderExtra *extra) {
+    A_long in_out = 0, outside_thr = 0;
+    bool use_padding = false;
+    PF_Err err = WithParam(in_data, OLMDG_IN_OUT, [&](const PF_ParamDef &d) { in_out = d.u.pd.value; });
+    if (!err)
+        err = WithParam(in_data, OLMDG_PADDING,
+                        [&](const PF_ParamDef &d) { use_padding = d.u.bd.value != 0; });
+    if (!err && use_padding && (in_out == OLMDG_OUTSIDE || in_out == OLMDG_BOTH))
+        err = WithParam(in_data, OLMDG_OUTSIDE_THR,
+                        [&](const PF_ParamDef &d) { outside_thr = d.u.sd.value; });
+    if (err) return err;
+    const Pad pd = ComputePad(in_data, use_padding, in_out, outside_thr);
+
+    PF_RenderRequest request = extra->input->output_request;
+    request.preserve_rgb_of_zero_alpha = 0;
+    PF_CheckoutResult result;
+    AEFX_CLR_STRUCT(result);
+    err = extra->cb->checkout_layer(in_data->effect_ref, OLMDG_INPUT, 0, &request,
+                                    in_data->current_time, in_data->time_step,
+                                    in_data->time_scale, &result);
+    if (err) return err;
+    const PF_LRect &res = result.result_rect;
+    if (res.left || res.top || res.right || res.bottom) {
+        PF_LRect grown = res;
+        grown.left -= pd.px;
+        grown.top -= pd.py;
+        grown.right += pd.px;
+        grown.bottom += pd.py;
+        extra->output->result_rect = grown;
+        extra->output->max_result_rect = grown;
+        extra->output->flags |= PF_RenderOutputFlag_RETURNS_EXTRA_PIXELS;
+    } else {
+        extra->output->result_rect = res;
+        extra->output->max_result_rect = res;
+    }
+    return PF_Err_NONE;
 }
 
 PF_Err CheckoutParams(PF_InData *in_data, PF_OutData *out_data, OLMDGParams *p) {
@@ -180,6 +241,7 @@ PF_Err CheckoutParams(PF_InData *in_data, PF_OutData *out_data, OLMDGParams *p) 
             case OLMDG_POWER: p->power = (float)def.u.fs_d.value; break;
             case OLMDG_BLUR_MODE: p->blur_mode = def.u.pd.value; break;
             case OLMDG_BLUR_SIZE: p->blur_size = def.u.sd.value; break;
+            case OLMDG_PADDING: p->use_padding = def.u.bd.value != 0; break;
         }
         const PF_Err checkin_err = PF_CHECKIN_PARAM(in_data, &def);
         if (!err) err = checkin_err;
@@ -373,25 +435,31 @@ Plane GaussianBlur(const Plane &src, int w, int h, int kx, int ky) {
     return dst;
 }
 
-// --- Gradation pipeline (0x181174750) ---------------------------------------
+// --- Gradation pipeline (0x1811750E0) ---------------------------------------
 
 struct Geometry {
-    int w, h;    // layer (possibly downsampled)
-    int fw, fh;  // full resolution: distances are measured in full-res pixels
+    int w, h;    // padded layer canvas (input + 2*pad)
+    int fw, fh;  // padded full resolution: distances are measured in full-res pixels
 };
 
-Plane Gradation(const Mask &mask, const Geometry &g, A_long thr, A_long interp, double maxval) {
+// 0.8.3 (0x1811750E0): cvThreshold with T (BINARY = max(1, thr) for Constant, TRUNC =
+// thr or 0.1 for thr 0), then cvMinMaxLoc(max), then cvNormalize(0, beta, MINMAX) with
+// beta = kmax * (max / T) when T > max, else kmax. Verified in the binary by a square probe.
+Plane Gradation(const Mask &mask, const Geometry &g, A_long thr, A_long interp, double kmax) {
     const Mask full = ResizeNearest(mask, g.w, g.h, g.fw, g.fh);
     Plane d = ResizeLinear(DistanceTransform(full, g.fw, g.fh), g.fw, g.fh, g.w, g.h);
-    const float t = (float)thr;
+    const float T = interp == OLMDG_CONSTANT ? std::max(1.0f, (float)thr)
+                                             : (thr == 0 ? 0.1f : (float)thr);
     if (interp == OLMDG_CONSTANT) {
-        const float T = std::max(1.0f, t);  // cvThreshold BINARY, maxval = T
-        for (float &v : d) v = v > T ? T : 0.0f;
+        for (float &v : d) v = v > T ? T : 0.0f;  // BINARY, maxval = T
     } else {
-        const float T = t == 0.0f ? 0.1f : t;  // cvThreshold TRUNC
-        for (float &v : d) v = v > T ? T : v;
+        for (float &v : d) v = v > T ? T : v;      // TRUNC
     }
-    NormalizeMinMax(d, maxval);
+    double maxval = d.empty() ? 0.0 : (double)d[0];
+    for (float v : d) maxval = std::max(maxval, (double)v);
+    double beta = kmax;
+    if ((double)T > maxval) beta = (maxval / (double)T) * kmax;
+    NormalizeMinMax(d, beta);
     return d;
 }
 
@@ -432,13 +500,15 @@ P *At(PF_EffectWorld *w, int x, int y) {
     return (P *)((char *)w->data + (ptrdiff_t)y * w->rowbytes) + x;
 }
 
-// Composite (0x181170480 family). `g` holds the gradation the compute step
-// wrote into the output world: alpha/red/green = blurred, blue = unblurred.
+// Composite (0x181170880 / 0x181170460 / 0x181170CC0). `g` holds the gradation
+// the compute step wrote into the output world: alpha/red/green = blurred,
+// blue = unblurred. `in` is the input pixel at (x - pad_x, y - pad_y), or zero
+// when that falls outside the input layer.
 template <typename P>
 P Composite(const OLMDGParams &p, const P &in, const P &g) {
     using D = Depth<P>;
     float r = D::Norm(g.red), gg = D::Norm(g.green), b = D::Norm(g.blue);
-    float t = p.invert ? r : 1.0f - r;
+    float t = p.invert ? r : std::min(1.0f, std::max(0.0f, 1.0f - r));
     float a = 0.0f, alpha_w = D::Norm(in.alpha);
     bool composite = true;
     if (p.in_out == OLMDG_OUTSIDE) {
@@ -486,25 +556,32 @@ template <typename P>
 void Render(PF_InData *in_data, PF_EffectWorld *input, PF_EffectWorld *output,
             const OLMDGParams &p) {
     using D = Depth<P>;
+    const int W = input->width, H = input->height;
+    if (W <= 0 || H <= 0) return;
+    const Pad pd = ComputePad(in_data, p.use_padding, p.in_out, p.outside_thr);
+
     Geometry g;
-    g.w = input->width;
-    g.h = input->height;
-    if (g.w <= 0 || g.h <= 0) return;
-    g.fw = (int)((float)(g.w * (A_long)in_data->downsample_x.den) /
-                 (float)in_data->downsample_x.num);
-    g.fh = (int)((float)(g.h * (A_long)in_data->downsample_y.den) /
-                 (float)in_data->downsample_y.num);
+    g.w = W + 2 * (int)pd.px;
+    g.h = H + 2 * (int)pd.py;
+    // 0x181171F20: full-res padded extent = W*den/num + 2r (float math as in the binary).
+    g.fw = (int)((float)(unsigned)((unsigned)in_data->downsample_x.den * (unsigned)W) /
+                     (float)in_data->downsample_x.num +
+                 (float)(2 * pd.r));
+    g.fh = (int)((float)(unsigned)((unsigned)in_data->downsample_y.den * (unsigned)H) /
+                     (float)in_data->downsample_y.num +
+                 (float)(2 * pd.r));
     g.fw = std::max(g.fw, 1);
     g.fh = std::max(g.fh, 1);
     const size_t n = (size_t)g.w * g.h;
 
-    // 0x181174990: alpha -> 8-bit, cvThreshold(> 1.0, 255, BINARY).
-    Mask mask(n);
+    // 0x181175370: alpha -> 8-bit, cvThreshold(> 1.0, 255, BINARY), on the padded canvas
+    // (the padding is zero, i.e. transparent, copyMakeBorder with value 0).
+    Mask mask(n, 0);
     size_t on = 0;
-    for (int y = 0; y < g.h; ++y)
-        for (int x = 0; x < g.w; ++x) {
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
             const bool set = D::Alpha8(At<P>(input, x, y)->alpha) > 1;
-            mask[(size_t)y * g.w + x] = set ? 255 : 0;
+            mask[(size_t)(y + pd.py) * g.w + (x + pd.px)] = set ? 255 : 0;
             on += set;
         }
     const bool degenerate = on == n || on == 0;
@@ -520,14 +597,17 @@ void Render(PF_InData *in_data, PF_EffectWorld *input, PF_EffectWorld *output,
             }
             break;
         case OLMDG_OUTSIDE:
-            for (auto &m : mask) m = 255 - m;  // 0x181174AC0
+            for (auto &m : mask) m = 255 - m;  // 0x1811754A0
             dist = Gradation(mask, g, p.outside_thr, p.interp, D::kMax);
             break;
         case OLMDG_BOTH: {
+            // 0x181171F20 case 3: cvCopy(inside, dist, mask) then cvCopy(outside, dist, ~mask).
+            // Each pixel takes exactly one of the two, so this is a per-pixel select.
+            const Mask orig = mask;
             const Plane inside = Gradation(mask, g, p.inside_thr, p.interp, D::kMax);
             for (auto &m : mask) m = 255 - m;
-            dist = Gradation(mask, g, p.outside_thr, p.interp, D::kMax);
-            for (size_t i = 0; i < n; ++i) dist[i] = inside[i] + dist[i];  // cvAdd
+            const Plane outside = Gradation(mask, g, p.outside_thr, p.interp, D::kMax);
+            for (size_t i = 0; i < n; ++i) dist[i] = orig[i] ? inside[i] : outside[i];
             break;
         }
         default:
@@ -546,7 +626,7 @@ void Render(PF_InData *in_data, PF_EffectWorld *input, PF_EffectWorld *output,
         else if (p.blur_mode == OLMDG_BLUR) blurred = GaussianBlur(dist, g.w, g.h, kx, ky);
     }
 
-    // cvMerge(blurred x3, dist) + cvConvert into the output world.
+    // cvMerge(blurred x3, dist) + cvConvert, copied top-left into the output world.
     const int ow = std::min(g.w, (int)output->width), oh = std::min(g.h, (int)output->height);
     for (int y = 0; y < oh; ++y)
         for (int x = 0; x < ow; ++x) {
@@ -556,8 +636,9 @@ void Render(PF_InData *in_data, PF_EffectWorld *input, PF_EffectWorld *output,
             o.blue = D::Sat(dist[i]);
         }
 
-    // Composite over the output extent.
+    // Composite over the output extent. Output pixel (x, y) maps to input (x - pad_x, y - pad_y).
     const PF_Rect &e = output->extent_hint;
+    const P zero{};
     for (int y = std::max(0, (int)e.top); y < std::min((int)e.bottom, oh); ++y)
         for (int x = std::max(0, (int)e.left); x < std::min((int)e.right, ow); ++x) {
             P &o = *At<P>(output, x, y);
@@ -571,7 +652,10 @@ void Render(PF_InData *in_data, PF_EffectWorld *input, PF_EffectWorld *output,
                     o.alpha = o.red = o.green = o.blue = 0;
                 }
             } else {
-                o = Composite<P>(p, *At<P>(input, x, y), o);
+                const int ix = x - (int)pd.px, iy = y - (int)pd.py;
+                const bool in_layer = ix >= 0 && ix < W && iy >= 0 && iy < H;
+                const P in = in_layer ? *At<P>(input, ix, iy) : zero;
+                o = Composite<P>(p, in, o);
             }
         }
 }

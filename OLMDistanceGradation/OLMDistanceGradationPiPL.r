@@ -22,11 +22,11 @@ resource 'PiPL' (16000) {
 #endif
 		AE_PiPL_Version { 2, 0 },
 		AE_Effect_Spec_Version { 13, 29 },
-		AE_Effect_Version { 266752 },
+		AE_Effect_Version { 268288 },
 		AE_Effect_Info_Flags { 0 },
-		/* 0x06000040 = USE_OUTPUT_EXTENT | DEEP_COLOR_AWARE |
-		 * SEND_UPDATE_PARAMS_UI (binary-exact). */
-		AE_Effect_Global_OutFlags { 0x06000040 },
+		/* 0x06000240 = USE_OUTPUT_EXTENT | I_EXPAND_BUFFER | DEEP_COLOR_AWARE |
+		 * SEND_UPDATE_PARAMS_UI (binary-exact, 0.8.3). */
+		AE_Effect_Global_OutFlags { 0x06000240 },
 		/* 0x08001400 = SUPPORTS_SMART_RENDER | FLOAT_COLOR_AWARE |
 		 * SUPPORTS_THREADED_RENDERING (binary-exact). */
 		AE_Effect_Global_OutFlags_2 { 0x08001400 },

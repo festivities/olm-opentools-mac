@@ -22,7 +22,8 @@ resource 'PiPL' (16000) {
 #endif
 		AE_PiPL_Version { 2, 0 },
 		AE_Effect_Spec_Version { 13, 29 },
-		AE_Effect_Version { 1081344 },
+		/* 2.2.0 (2026-11-20 binary PiPL: AE_Effect_Version = 1114112, file 0x180031162). */
+		AE_Effect_Version { 1114112 },
 		AE_Effect_Info_Flags { 0 },
 		/* Binary raw out_flags are 0x02000440; the port adds
 		 * PF_OutFlag_SEND_UPDATE_PARAMS_UI (bit 26) so AE sends
