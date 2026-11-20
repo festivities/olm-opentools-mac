@@ -1,10 +1,10 @@
-# OLM Distance Gradation: 0.8.2 ALPHA -> 0.8.3 (DistanceGradation-20261120.aex)
+# OLM Distance Gradation: 0.8.2 ALPHA -> 0.8.3 (DistanceGradation.aex)
 
 Binaries
-- OLD: `.opencode/olm-opentools-windows/OLMDistanceGradation/DistanceGradation-20260304.aex`
+- OLD: old `DistanceGradation.aex` (git 408cf40)
   (sha256 8d1b5f86...). IDB `%TEMP%\opencode\OLMDistanceGradation-analysis.aex.i64`,
   IDA instance 8edf1f36071b (input path checked).
-- NEW: `.opencode/olm-opentools-windows/OLMDistanceGradation/DistanceGradation-20261120.aex`
+- NEW: `.opencode/olm-opentools-windows/OLMDistanceGradation/DistanceGradation.aex`
   (sha256 cb627ab4...). TEMP copy `%TEMP%\opencode\OLMDistanceGradation-20261120-analysis.aex`,
   IDA instance 9037e112babd (input path checked).
 - Addresses are NEW unless marked OLD.

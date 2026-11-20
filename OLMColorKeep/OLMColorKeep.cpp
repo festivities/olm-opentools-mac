@@ -1,6 +1,6 @@
 /* OLMColorKeep: macOS port of the Windows OLM Color Keep 1.1.0
- * (ColorKeep-20261120.aex). Behaviour follows the verified binary (spec:
- * %TEMP%\opencode\specs\OLMColorKeep-20261120.md):
+ * (ColorKeep.aex). Behaviour follows the verified binary (spec:
+ * .agents/specs/OLMColorKeep.md):
  *   entry_point 0x180006690 (MyEffect dispatch), PARAMS_SETUP 0x180001000,
  *   UPDATE_PARAMS_UI 0x180001460, SMART_PRE_RENDER 0x180001BC0,
  *   SMART_RENDER 0x1800010D0, pixel kernels 0x1800015C0 / 0x180001690 / 0x180001780.

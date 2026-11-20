@@ -8,7 +8,7 @@
 resource 'PiPL' (16000) {
 	{
 		Kind { AEEffect },
-		/* Binary PiPL (ColorKeep-20261120.aex, verified): Name "OLM Color Keep",
+		/* Binary PiPL (ColorKeep.aex, verified): Name "OLM Color Keep",
 		 * Match Name "OLM Color Keep" (unchanged, so old projects still resolve). */
 		Name { "OLM Color Keep" },
 		Category { "OLM Plug-ins" },

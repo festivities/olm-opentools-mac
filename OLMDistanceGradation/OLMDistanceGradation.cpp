@@ -1,5 +1,5 @@
 /* OLMDistanceGradation: macOS SmartRender port of the Windows OLM Distance
- * Gradation 0.8.3 (DistanceGradation-20261120.aex). The binary statically links
+ * Gradation 0.8.3 (DistanceGradation.aex). The binary statically links
  * OpenCV 4.5.5 and drives it through the old C API; the handful of routines
  * it uses are reimplemented below following OpenCV's arithmetic.
  *

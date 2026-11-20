@@ -496,7 +496,7 @@ void init_side(Side &s, bool binary, const char *label) {
 
 
 // ==================================================== spec-based checks ====
-// Expected values come from the verified binary spec (OLMColorKeep-20261120.md),
+// Expected values come from the verified binary spec (OLMColorKeep.md),
 // not from running the binary. The binary-differential run lives in the e2e harness.
 
 int g_checks = 0;

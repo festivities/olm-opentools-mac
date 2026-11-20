@@ -1,5 +1,5 @@
 /* OLMColorKey: macOS SmartRender port of the Windows OLM Color Key 2.3.3
- * (binary dated 2026-11-20; spec %TEMP%\opencode\specs\OLMColorKey-20261120.md).
+ * (binary dated 2026-11-20; spec .agents/specs/OLMColorKey.md).
  * 2.3.3 addresses: entry 0x180010680, setup 0x180001000, checkout 0x18000A8E0,
  * UI 0x180001D90, pre-render 0x18000BBD0, smart render 0x180001C20, kernels
  * 0x1800099B0/9500/9E60, keyers 0x180002360/2F30/3B30. Every kernel, conversion,

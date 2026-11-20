@@ -17,20 +17,20 @@ load-bearing fact was re-verified in IDA and by end-to-end runs against the real
 ## Status (2026-11-20)
 
 User confirmed **all 9 original ports work in Mac AE** (2026-11-20). The
-2026-11-20 OLM release then shipped new binaries; the reference folders keep both
-(`<name>-20260304.aex` = the binary the earlier port matched, byte-identical to the
-old tracked file; `<name>-20261120.aex` = current). Ports now target the 20261120
-binaries.
+2026-11-20 OLM release then shipped new binaries, which replaced the old ones under
+their original file names in `.opencode/olm-opentools-windows/` (the pre-update
+binaries the earlier ports matched are in git history at `408cf40`). Ports now target
+the 2026-11-20 binaries.
 
 | Plug-in (dir) | Windows source | Port state |
 |---|---|---|
 | OLMDirectionalBlur | `OLMDirectionalBlur.aex` 1.1.1 | ✅ Mac AE confirmed; not in the 11-20 release |
 | OLMRadialBlur | `OLMRadialBlur.aex` 1.3.0 | ✅ Mac AE confirmed; not in the 11-20 release |
-| OLMColorKey | `OLMColorKey-20261120.aex` **2.3.3** | **Updated 11-20** (25→200 colours). MinGW 4,061 checks; e2e 1623/1623 defs, 312 UI states, 5,475 renders (33 residual = same classes as 2.3.1). **Mac build/AE pending** |
-| OLMColorKeep | `ColorKeep-20261120.aex` **1.1.0** | **Rewritten 11-20** (MyEffect framework, 200 colours, RGB-only match). MinGW 63 checks; e2e 0 differing bytes. **Mac build/AE pending** |
+| OLMColorKey | `OLMColorKey.aex` **2.3.3** | **Updated 11-20** (25→200 colours). MinGW 4,061 checks; e2e 1623/1623 defs, 312 UI states, 5,475 renders (33 residual = same classes as 2.3.1). **Mac build/AE pending** |
+| OLMColorKeep | `ColorKeep.aex` **1.1.0** | **Rewritten 11-20** (MyEffect framework, 200 colours, RGB-only match). MinGW 63 checks; e2e 0 differing bytes. **Mac build/AE pending** |
 | OLMBlur | `OLMBlur.aex` 1.2.1 | ✅ Mac AE confirmed; not in the 11-20 release |
-| OLMDistanceGradation | `DistanceGradation-20261120.aex` **0.8.3** | **Updated 11-20** (Use Padding, I_EXPAND_BUFFER, normalise rule, Both = masked select). MinGW 132 checks; e2e 2,251/2,716 bit-identical, rest explained. **Mac build/AE pending** |
-| OLMSmoother2AE | `OLMSmoother2-20261120.aex` **2.2.0** | **Updated 11-20** (Oklab, float Smooth Range, b3 edge fix). MinGW 999 checks; e2e 8,358 runs, 0 differing bytes. **Mac build/AE pending** |
+| OLMDistanceGradation | `DistanceGradation.aex` **0.8.3** | **Updated 11-20** (Use Padding, I_EXPAND_BUFFER, normalise rule, Both = masked select). MinGW 132 checks; e2e 2,251/2,716 bit-identical, rest explained. **Mac build/AE pending** |
+| OLMSmoother2AE | `OLMSmoother2.aex` **2.2.0** | **Updated 11-20** (Oklab, float Smooth Range, b3 edge fix). MinGW 999 checks; e2e 8,358 runs, 0 differing bytes. **Mac build/AE pending** |
 | OLMToonDilate | `OLMToonDilate.aex` 1.1.1 | ✅ Mac AE confirmed; not in the 11-20 release |
 | OLMKiraKira | `OLMKiraKira.aex` 3.3 | ✅ Mac AE confirmed; not in the 11-20 release; ramp *editor* UI not ported |
 | OLMAntiAntiAlias | `OLMAntiAntiAlias.aex` 1.1.6 | **New 11-20.** MinGW 30 checks; e2e 5,000 renders + 294 button/UI cases, 0 differences. **Mac build/AE pending** |
@@ -51,20 +51,20 @@ host, under `%TEMP%\opencode\olm-e2e\`: `colorkey-20261120`, `colorkeep`,
 `smoother-20261120`, `distgrad`, `antiantialias`, `uvmap`). Main agent re-verified
 identities from the PiPL bytes, spot-checked math in IDA and reran every MinGW test.
 
-- **ColorKey 2.3.3** (`specs/OLMColorKey-20261120.md`): version + slots 25→200 only.
+- **ColorKey 2.3.3** (`specs/OLMColorKey.md`): version + slots 25→200 only.
   num_params 1624; positions 0..223 unchanged (old projects bind). Slot uu.ids use a
   second block for n≥100: Color 324+5n, Thr 325+5n, R/G/B 326..328+5n, UseColor
   1024+3n, UseReplace 1025+3n, ReplaceColor 1026+3n. Render math byte-identical.
   The "Target Source …/Select Layer/Point-Color|Color-Color|Point-Layer" strings are
   **dead** (present in 2.3.1 too, no xrefs, no params) — do not implement.
-- **ColorKeep 1.1.0** (`specs/OLMColorKeep-20261120.md`): rewrite on the MyEffect
+- **ColorKeep 1.1.0** (`specs/OLMColorKeep.md`): rewrite on the MyEffect
   framework. PiPL Name now `OLM Color Keep` (match name unchanged). 200 colours
   (num_params 202). Match is **R,G,B only**, `|d| > 1e-4f` = mismatch (NaN matches),
   on float-converted pixels (8: /255f, 16: ·2^-15); writes **alpha only** (input alpha
   if matched, else 0; RGB from `utils->copy`). The Drawbot/"Color select"/ExtendScript
   code is an unreachable framework Ramp widget (no arbitrary param, no CUSTOM_UI) —
   nothing to port. Port adds SEND_UPDATE_PARAMS_UI (binary 0x02000040 → 0x06000040).
-- **Smoother v2 2.2.0** (`specs/OLMSmoother2-20261120.md`): Smoother Version popup
+- **Smoother v2 2.2.0** (`specs/OLMSmoother2.md`): Smoother Version popup
   `v1 (sRGB)|v2 (Linear)|v2 (Oklab)` + SUPERVISE; Oklab transforms 0x180005520 /
   0x180005840 (gamma ignored; gamma UI disabled/hidden in Oklab); Smooth Range is now
   a FLOAT slider (threshold `float(v)*0.01f + 0.001f`); edge bit b3 tested when
@@ -75,7 +75,7 @@ identities from the PiPL bytes, spot-checked math in IDA and reran every MinGW t
   LSB in Oklab (harness hook `OLMS2_CBRT` routes to ucrtbase for 0 diffs). The
   Smooth Range int→float type change is the binary's; old-project loading of that
   value is untested.
-- **DistanceGradation 0.8.3** (`specs/OLMDistanceGradation-20261120.md`): stage
+- **DistanceGradation 0.8.3** (`specs/OLMDistanceGradation.md`): stage
   DEVELOP (was ALPHA); out_flags +I_EXPAND_BUFFER (0x06000240); new param 13 `Use
   Padding` (checkbox); threshold slider_max 512→1000. New PRE_RENDER 0x181174320:
   pad r = `den/num` of downsample_y, or Outside Threshold if larger (Outside/Both),
@@ -639,7 +639,7 @@ installs without explicit permission; `.opencode/` is read-only reference.
 
 Superseded the 1.0.1 port (4-channel quantised match, 100 colours, Name without the
 OLM prefix). Current facts: the 2026-11-20 summary above and
-`.agents/specs/OLMColorKeep-20261120.md`. Entry `entry_point` 0x180006690; UI
+`.agents/specs/OLMColorKeep.md`. Entry `entry_point` 0x180006690; UI
 0x180001460; PreRender 0x180001BC0; SmartRender 0x1800010D0 with pixel fns
 0x1800015C0/1690/1780 (main agent verified RGB-only compare, alpha-only write).
 Test `OLMColorKeep/test_color_keep.cpp`; e2e `%TEMP%\opencode\olm-e2e\colorkeep\`.

@@ -12,7 +12,7 @@
 #include "Param_Utils.h"
 #include "Smart_Utils.h"
 
-// OLM Color Keep 1.1.0 (ColorKeep-20261120.aex). Match name is unchanged, so
+// OLM Color Keep 1.1.0 (ColorKeep.aex). Match name is unchanged, so
 // projects saved with the 1.0.1 effect keep resolving to this plug-in.
 #define OLMCKP_NAME  "OLM Color Keep"
 #define OLMCKP_ABOUT_DESC "Constraint colors"

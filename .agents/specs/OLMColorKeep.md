@@ -1,6 +1,6 @@
-# OLM Color Keep 1.1.0 (ColorKeep-20261120.aex) — verified spec
+# OLM Color Keep 1.1.0 (ColorKeep.aex) — verified spec
 
-Binary: `.opencode/olm-opentools-windows/OLMColorKeep/ColorKeep-20261120.aex`
+Binary: `.opencode/olm-opentools-windows/OLMColorKeep/ColorKeep.aex`
 (127,488 bytes, MD5 `e8e8eafd620953c137bfbbfe1ec73874`, SHA256 `f378f431…a305`).
 IDA working copy: `%TEMP%\opencode\OLMColorKeep-20261120-analysis.aex`
 (IDB instance `61c789fd438f`; all IDA calls pinned to that id and MD5-asserted).
@@ -166,7 +166,7 @@ NaN gives `fabs(...) > eps` false → treated as a **match** for that channel).
 
 Old 1.0.1 compared all four channels with `(u8)(int)((c+1/510)*255)` quantisation. **Changed.**
 
-## 10. Changes vs old 1.0.1 (ColorKeep-20260304.aex, 27 KB)
+## 10. Changes vs old 1.0.1 (old `ColorKeep.aex` (git 408cf40), 27 KB)
 
 | Area | Old 1.0.1 | New 1.1.0 |
 |---|---|---|
