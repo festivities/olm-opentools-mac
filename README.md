@@ -15,13 +15,15 @@ No source code is provided for the originals, so each plug-in was reverse-engine
 |---|---|---|
 | OLM DirectionalBlur | 1.1.1 | ✅ Verified in Mac AE |
 | OLM RadialBlur | 1.3.0 | ✅ Verified in Mac AE |
-| OLM Color Key | 2.3.1 | ✅ Verified in Mac AE |
-| Color Keep | 1.0.1 | Testing |
-| OLM Blur | 1.2.1 | Build/verify pending |
-| Distance Gradation | 0.8.2α | Build/verify pending |
-| OLM Smoother v2 | 2.1.0 | Build/verify pending |
-| OLM Toon Dilate | 1.1.1 | Build/verify pending |
-| OLM Kira Kira | 3.3 | Build/verify pending |
+| OLM Color Key | 2.3.3 | Updated — Mac AE verify pending |
+| OLM Color Keep | 1.1.0 | Updated — Mac AE verify pending |
+| OLM Blur | 1.2.1 | ✅ Verified in Mac AE |
+| Distance Gradation | 0.8.3 | Updated — Mac AE verify pending |
+| OLM Smoother v2 | 2.2.0 | Updated — Mac AE verify pending |
+| OLM Toon Dilate | 1.1.1 | ✅ Verified in Mac AE |
+| OLM Kira Kira | 3.3 | ✅ Verified in Mac AE |
+| OLM Anti Anti Alias | 1.1.6 | New — Mac AE verify pending |
+| OLM UV Map | 1.1.1 | New — Mac AE verify pending |
 
 In After Effects they appear under the **`OLM Plug-ins`** effect category.
 

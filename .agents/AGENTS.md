@@ -2,45 +2,118 @@
 
 Port of OLM OpenTools (Windows-only After Effects plug-ins for anime compositing)
 to macOS, targeting AE 2026 / SDK 26.5 at ~99% visual parity (bit-exact is
-deferred). All **9** plug-ins are ported and pass their MinGW fake-host tests on
-Windows. **What is left is: compile on macOS (`./build-all.sh`) and smoke-test
-each in After Effects** — see "Next steps" at the bottom.
+deferred). All **11** plug-ins are ported and pass their MinGW fake-host tests on
+Windows. The original 9 are user-confirmed working in Mac AE (2026-11-20). The
+2026-11-20 OLM release updated 4 of them and added 2 new ones; those 6 need a Mac
+build + AE smoke test — see "Next steps" at the bottom.
 
 This file is the complete handoff context; a new session needs nothing else. The
 per-plug-in sections below are verified reference (identity/PiPL, params, render
-math, quirks) — consult the one for the plug-in you are working on. Trust the
-decompile over prose; every load-bearing fact was re-verified in IDA.
+math, quirks) — consult the one for the plug-in you are working on. Detailed
+verified specs for the 2026-11-20 work live in `.agents/specs/` (one file per
+plug-in, IDA addresses throughout). Trust the decompile over prose; every
+load-bearing fact was re-verified in IDA and by end-to-end runs against the real `.aex`.
 
-## Status (2026-10-10)
+## Status (2026-11-20)
 
-**All 9 plug-ins are ported and MinGW-tested on Windows. Remaining work = Mac
-compile + AE smoke test (see "Next steps").** User is testing one plug-in at a
-time; build with `./build-all.sh` (below).
+User confirmed **all 9 original ports work in Mac AE** (2026-11-20). The
+2026-11-20 OLM release then shipped new binaries; the reference folders keep both
+(`<name>-20260304.aex` = the binary the earlier port matched, byte-identical to the
+old tracked file; `<name>-20261120.aex` = current). Ports now target the 20261120
+binaries.
 
 | Plug-in (dir) | Windows source | Port state |
 |---|---|---|
-| OLMDirectionalBlur | `OLMDirectionalBlur.aex` 1.1.1 | ✅ Confirmed in user Mac AE (Alpha Fade); **2026-10-10 e2e fixes (row chunking, PI literal) need AE retest** |
-| OLMRadialBlur | `OLMRadialBlur.aex` 1.3.0 | ✅ Confirmed in user Mac AE (UI); **2026-10-10 render rework (rotation 1:1, samplers, noise/size) needs AE retest** |
-| OLMColorKey | `OLMColorKey.aex` 2.3.1 | ✅ Confirmed in user Mac AE; MinGW 1,056 checks + e2e vs real `.aex` (2026-10-10 blur/chamfer fixes need AE retest) |
-| OLMColorKeep | `ColorKeep.aex` 1.0.1 (no OLM prefix) | Source verified; MinGW 88 checks; ✅ **Confirmed in user Mac AE** |
-| OLMBlur | `OLMBlur.aex` 1.2.1 | MinGW 201 checks (incl. brute-force ref); ✅ **Confirmed in user Mac AE** |
-| OLMDistanceGradation | `DistanceGradation.aex` 0.8.2α | MinGW 104 checks; OpenCV reimplemented; ✅ **Confirmed in user Mac AE** |
-| OLMSmoother2AE | `OLMSmoother2.aex` 2.1.0 | MinGW 995 checks + **end-to-end bit-exact vs the real `.aex`** (4,333 runs, 8/16/32 bpc); **Mac rebuild + AE retest pending** |
-| OLMToonDilate | `OLMToonDilate.aex` 1.1.1 | MinGW 45 checks + end-to-end bit-exact vs the real `.aex` (3,360 runs); **Mac build/AE pending** |
-| OLMKiraKira | `OLMKiraKira.aex` 3.3 | MinGW 61 checks + end-to-end vs the real `.aex` (436 scenarios, ≤1 LSB / ≤1.2e-5 float); OpenCV reimplemented; ramp *editor* UI not ported; **Mac build/AE pending** |
+| OLMDirectionalBlur | `OLMDirectionalBlur.aex` 1.1.1 | ✅ Mac AE confirmed; not in the 11-20 release |
+| OLMRadialBlur | `OLMRadialBlur.aex` 1.3.0 | ✅ Mac AE confirmed; not in the 11-20 release |
+| OLMColorKey | `OLMColorKey-20261120.aex` **2.3.3** | **Updated 11-20** (25→200 colours). MinGW 4,061 checks; e2e 1623/1623 defs, 312 UI states, 5,475 renders (33 residual = same classes as 2.3.1). **Mac build/AE pending** |
+| OLMColorKeep | `ColorKeep-20261120.aex` **1.1.0** | **Rewritten 11-20** (MyEffect framework, 200 colours, RGB-only match). MinGW 63 checks; e2e 0 differing bytes. **Mac build/AE pending** |
+| OLMBlur | `OLMBlur.aex` 1.2.1 | ✅ Mac AE confirmed; not in the 11-20 release |
+| OLMDistanceGradation | `DistanceGradation-20261120.aex` **0.8.3** | **Updated 11-20** (Use Padding, I_EXPAND_BUFFER, normalise rule, Both = masked select). MinGW 132 checks; e2e 2,251/2,716 bit-identical, rest explained. **Mac build/AE pending** |
+| OLMSmoother2AE | `OLMSmoother2-20261120.aex` **2.2.0** | **Updated 11-20** (Oklab, float Smooth Range, b3 edge fix). MinGW 999 checks; e2e 8,358 runs, 0 differing bytes. **Mac build/AE pending** |
+| OLMToonDilate | `OLMToonDilate.aex` 1.1.1 | ✅ Mac AE confirmed; not in the 11-20 release |
+| OLMKiraKira | `OLMKiraKira.aex` 3.3 | ✅ Mac AE confirmed; not in the 11-20 release; ramp *editor* UI not ported |
+| OLMAntiAntiAlias | `OLMAntiAntiAlias.aex` 1.1.6 | **New 11-20.** MinGW 30 checks; e2e 5,000 renders + 294 button/UI cases, 0 differences. **Mac build/AE pending** |
+| OLMUVMap | `OLMUVMap.aex` 1.1.1 | **New 11-20.** MinGW 69 checks; e2e 5,064 renders: 0 diff at 8/16 bpc, 31 bytes 1-ulp (`logf`) at 32 bpc. **Mac build/AE pending** |
 
-Port queue (user order, all done): OLMBlur → OLMDistanceGradation → OLMSmoother2AE
-→ OLMToonDilate → OLMKiraKira. Read-only references in
-`.opencode/olm-opentools-windows/<Name>/`. Windows-vs-Mac pixel comparison is
-deferred by user ("99% of the look" is the bar).
+Read-only references in `.opencode/olm-opentools-windows/<Name>/`. Windows-vs-Mac
+pixel comparison is deferred by user ("99% of the look" is the bar).
 
 **Warning to future agents:** the first pass of this port (commit `8cf0800`) contained a
 plausible-looking but *invented* render core (MSVC `rand`, rotate/`0.5+0.5*noise` weights,
 sum-normalized taps). It was replaced in this pass. Trust the decompile, not the prose.
 
+## 2026-11-20 release update (summary; full specs in `.agents/specs/`)
+
+Method: one `olm-worker` per plug-in decompiled the new binary (diffing against the
+old IDB), updated the port, and ran an e2e harness (real `.aex` + port in one fake
+host, under `%TEMP%\opencode\olm-e2e\`: `colorkey-20261120`, `colorkeep`,
+`smoother-20261120`, `distgrad`, `antiantialias`, `uvmap`). Main agent re-verified
+identities from the PiPL bytes, spot-checked math in IDA and reran every MinGW test.
+
+- **ColorKey 2.3.3** (`specs/OLMColorKey-20261120.md`): version + slots 25→200 only.
+  num_params 1624; positions 0..223 unchanged (old projects bind). Slot uu.ids use a
+  second block for n≥100: Color 324+5n, Thr 325+5n, R/G/B 326..328+5n, UseColor
+  1024+3n, UseReplace 1025+3n, ReplaceColor 1026+3n. Render math byte-identical.
+  The "Target Source …/Select Layer/Point-Color|Color-Color|Point-Layer" strings are
+  **dead** (present in 2.3.1 too, no xrefs, no params) — do not implement.
+- **ColorKeep 1.1.0** (`specs/OLMColorKeep-20261120.md`): rewrite on the MyEffect
+  framework. PiPL Name now `OLM Color Keep` (match name unchanged). 200 colours
+  (num_params 202). Match is **R,G,B only**, `|d| > 1e-4f` = mismatch (NaN matches),
+  on float-converted pixels (8: /255f, 16: ·2^-15); writes **alpha only** (input alpha
+  if matched, else 0; RGB from `utils->copy`). The Drawbot/"Color select"/ExtendScript
+  code is an unreachable framework Ramp widget (no arbitrary param, no CUSTOM_UI) —
+  nothing to port. Port adds SEND_UPDATE_PARAMS_UI (binary 0x02000040 → 0x06000040).
+- **Smoother v2 2.2.0** (`specs/OLMSmoother2-20261120.md`): Smoother Version popup
+  `v1 (sRGB)|v2 (Linear)|v2 (Oklab)` + SUPERVISE; Oklab transforms 0x180005520 /
+  0x180005840 (gamma ignored; gamma UI disabled/hidden in Oklab); Smooth Range is now
+  a FLOAT slider (threshold `float(v)*0.01f + 0.001f`); edge bit b3 tested when
+  `x+1 < W` (2.1: `x+1 < W-1`); writer clamps all channels incl. alpha. MLAA core
+  byte-identical. "Enable Local Contrast Adaptation" is a **dead string** (also in
+  2.1). `#pragma clang fp contract(off)` added: AppleClang fuses a*b+c into FMA by
+  default, which breaks bit parity. Mac residual: Apple `cbrtf` vs UCRT `cbrtf` ⇒ ≤1
+  LSB in Oklab (harness hook `OLMS2_CBRT` routes to ucrtbase for 0 diffs). The
+  Smooth Range int→float type change is the binary's; old-project loading of that
+  value is untested.
+- **DistanceGradation 0.8.3** (`specs/OLMDistanceGradation-20261120.md`): stage
+  DEVELOP (was ALPHA); out_flags +I_EXPAND_BUFFER (0x06000240); new param 13 `Use
+  Padding` (checkbox); threshold slider_max 512→1000. New PRE_RENDER 0x181174320:
+  pad r = `den/num` of downsample_y, or Outside Threshold if larger (Outside/Both),
+  grows result rect + RETURNS_EXTRA_PIXELS, clears preserve_rgb_of_zero_alpha, no
+  union. Compute pads the mask (copyMakeBorder 0), DT on padded full-res size,
+  composite reads input at (x−px, y−py). Normalise `beta = kmax·(max/T)` when T > max
+  (net `min(d,T)·kmax/T`). Both = per-pixel masked select, not cvAdd. Residuals (465 /
+  2,716 runs): blur 1 LSB (OpenCV separable order), float ordering ≤1e-5, and Constant
+  with threshold ≤1 (binary's IPP DT gives distance slightly >1 for 1-px gaps). Blur
+  Mode popup num_choices is 5 in both binaries; port keeps 3 (user-confirmed).
+- **AntiAntiAlias 1.1.6 (new)** (`specs/OLMAntiAntiAlias.md`): match name `OLM OLM
+  Anti Anti Alias` (doubled). 108 params: count, Use automatic colors, 3 buttons
+  (Initialize / Add automatic / Clear), group of 100 colours. Buttons render the layer
+  upstream via AEGP (LayerRenderOptions + RenderAndCheckoutLayerFrame), scan colours
+  and write count + colours back with AEGP_SetStreamValue (slot/count rules in spec).
+  Render: exact palette match, ring search r=1/2 with pair-projection cost (NaN cost
+  for duplicate colours is never accepted), flood fill. Port adds
+  SEND_UPDATE_PARAMS_UI; legacy RENDER no-op.
+- **UVMap 1.1.1 (new)** (`specs/OLMUVMap.md`): Texture (layer, default self),
+  Interpolation `Nearest Neighbor|Bilinear|Trilinear` (dflt 3), Smoothness 0..1 dflt
+  0.5 (disabled unless Trilinear; port adds SEND_UPDATE_PARAMS_UI). UV = (R, 1−G)
+  scaled by (W−1, H−1); float mip chain rebuilt per render; LOD from neighbour UV
+  differences, Smoothness lerps min/max footprint; out alpha = f(inA)·texA. Binary
+  needs non-null sequence data for Trilinear ("Trilinear invoked without mipmaps");
+  the port also accepts `in_data->sequence_data`. Mac residual: libm `logf` ⇒ 1-ulp
+  at 32 bpc Trilinear.
+
+**IDA lesson (2026-11-20):** ida-mcp's default "current" database is shared by all
+agents; with parallel workers it switched to another agent's IDB and returned wrong
+bytes. Always pass `instance_id` explicitly and assert `idaapi.get_input_file_path()`
+inside the call.
+
+The e2e harnesses, decompile dumps and IDBs live only in `%TEMP%\opencode\` on the
+Windows dev box (not in the repo); the `.agents/specs/` files are the durable record.
+
 ## Build
 
-**One-click (macOS):** `./build-all.sh` at the repo root builds all 9 plug-ins
+**One-click (macOS):** `./build-all.sh` at the repo root builds every plug-in (11)
 into `./dist` as signed `.plugin` bundles ( Rez PiPL + `xattr -cr` + ad-hoc
 codesign happen in each CMakeLists post-build). It auto-detects the bundled SDK
 under `.opencode/AfterEffectsSDK_*_MacOS/*/Examples`. Needs full Xcode + cmake.
@@ -327,7 +400,10 @@ Decompiled from `.opencode/olm-opentools-windows/OLMRadialBlur/OLMRadialBlur.aex
   border, 8/16/32 bpc). MinGW command mirrors the DirectionalBlur one (no
   iterate suites needed; links Smart_Utils/AEGP_SuiteHandler/MissingSuiteError).
 
-## OLMColorKey (2.3.1; works in user Mac AE testing)
+## OLMColorKey (2.3.1 reference below; now 2.3.3 — see the 2026-11-20 summary)
+
+> 2.3.3 changes only the version and the slot count (25→200, second uu.id block);
+> everything below still holds except counts/addresses (2.3.3 addresses in the spec).
 
 Analyzed a TEMP copy, not the reference: original
 `.opencode/olm-opentools-windows/OLMColorKey/OLMColorKey.aex`;
@@ -500,10 +576,13 @@ then: group-end defs carry names ("Sharp Tail" ×2, "Thickness") like the binary
 - `OLMSmoother2AE/` — same six-file layout; `test_smoother2.cpp`.
 - `OLMToonDilate/` — same six-file layout; `test_toon_dilate.cpp`.
 - `OLMKiraKira/` — same six-file layout; `test_kira_kira.cpp`.
-- `build-all.sh` — one-click macOS build of all 9 into `./dist` (see "Build").
+- `OLMAntiAntiAlias/` — six-file layout; `test_anti_anti_alias.cpp`.
+- `OLMUVMap/` — six-file layout; `test_uv_map.cpp`.
+- `.agents/specs/` — verified specs for the 2026-11-20 updates and new ports.
+- `build-all.sh` — one-click macOS build of every plug-in dir into `./dist` (see "Build").
 - `.gitattributes` — forces `*.sh` to LF so `build-all.sh` runs after a Mac clone.
 
-## Porting workflow (proven across all 9 ports — reuse for any AE-smoke-test bug or future plug-in)
+## Porting workflow (proven across all 11 ports — reuse for any AE-smoke-test bug or future plug-in)
 
 1. **Decompile by delegation**: copy the reference `.aex` to
    `%TEMP%\opencode\<Name>-analysis.aex` and open THAT with `ida-mcp`
@@ -556,45 +635,14 @@ installs without explicit permission; `.opencode/` is read-only reference.
   `AEGP_SuiteHandler(in_data->pica_basicP)` (Mac takes `const SPBasicSuite*`, not in/out data).
 - Reference-only dirs (do not edit): `.opencode/AfterEffectsSDK_*`, `.opencode/olm-opentools-windows/`.
 
-## OLMColorKeep (1.0.1; source verified, user Mac AE testing in progress)
+## OLMColorKeep (1.1.0, 2026-11-20 rewrite)
 
-Reference `.opencode/olm-opentools-windows/OLMColorKeep/ColorKeep.aex` (27 KB, NO
-`OLM` prefix in the filename); IDA working copy
-`%TEMP%\opencode\OLMColorKeep-analysis.aex`. Unlike ColorKey this is the plain
-SDK-sample framework (AEGP_SuiteHandler, `entryPointFunc`, iterate suites), ~10
-real functions, so the main agent decompiled and implemented it directly.
-
-- **PiPL** (verified bytes): Name `Color Keep` (no OLM prefix), Match
-  `OLM Color Keep`, Category `OLM Plug-ins`, spec 13.29, version 526336
-  (1.0.1), out_flags `0x02000040`, out_flags2 `0x08001400`. Port adds
-  SEND_UPDATE_PARAMS_UI (`0x06000040`) so a freshly applied effect hides
-  unused pickers immediately. About: `Color Keep v1.01\r<desc>` (desc
-  `Keep the selected color from the source.\rCopyright 2010 OLM Digital, Inc.`).
-- **Dispatch** `0x1800025C0`: 0 About, 1 GlobalSetup (+RegisterWithAEGP
-  "Color Keep"), 4 Params, 11 RENDER (broken in the binary: count/colors in
-  its refcon are never initialised; unreachable under SmartRender, port
-  no-ops it), 13 USER_CHANGED_PARAM + 14 UPDATE_PARAMS_UI → `0x180002210`,
-  23 PreRender (checkout + rect union `0x180003B80`), 24 SmartRender `0x180001CA0`.
-- **Params**: position == uu.id. 1 `Enabled Color Num` SLIDER 0–100 dflt 1,
-  flags SUPERVISE; 2..101 `Color` COLOR, opaque black. num_params 102.
-- **UI**: reads the count stream at layer time and, for each Color i,
-  `SetDynamicStreamFlag(HIDDEN, undoable=false, i >= count)`; per-stream
-  errors ignored. Port reads `params[1]->u.sd.value` (same value).
-- **Render**: `utils->copy(input, output)`, then iterate over
-  `output->extent_hint` (progress_final = bottom − top). Colors come from
-  PF_ColorParamSuite1 as float ARGB. A pixel is kept iff ALL FOUR channels
-  (alpha included — key alpha is 1.0, so only fully opaque pixels can match)
-  equal one of the first `count` colors: 8 bpc `(u8)(int)((c+1/510)*255)`,
-  16 bpc `(u16)(int)((c+1/65536)*32768)`, 32 bpc `!(|d| > 1e-4f)` (NaN
-  matches — comiss/ja). Output RGB = input RGB always; alpha = input alpha
-  if kept, else 0. No threshold, no color spaces, no edge pipeline.
-- **Deviations**: count clamped to 0..100 before indexing; input layer
-  checked in (binary never checks in); RENDER no-op; added UPDATE_PARAMS_UI flag.
-- **Test** `OLMColorKeep/test_color_keep.cpp`: fake host, real EffectMain;
-  identities/defaults/flags/About, UI hiding for both commands at counts
-  0/1/37/100, keep/drop/alpha-match/count gating/extent pass-through,
-  quantisation boundaries at each depth, float NaN quirk, checkout balance.
-  Build with the standard MinGW recipe below (source `test_color_keep.cpp`).
+Superseded the 1.0.1 port (4-channel quantised match, 100 colours, Name without the
+OLM prefix). Current facts: the 2026-11-20 summary above and
+`.agents/specs/OLMColorKeep-20261120.md`. Entry `entry_point` 0x180006690; UI
+0x180001460; PreRender 0x180001BC0; SmartRender 0x1800010D0 with pixel fns
+0x1800015C0/1690/1780 (main agent verified RGB-only compare, alpha-only write).
+Test `OLMColorKeep/test_color_keep.cpp`; e2e `%TEMP%\opencode\olm-e2e\colorkeep\`.
 
 ## OLMBlur (1.2.1; source verified, Mac host test pending)
 
@@ -649,7 +697,10 @@ SDK-sample framework as ColorKeep); decompiled and implemented by the main agent
   division/no-bleed, alpha untouched, amount 0 pass-through, Legacy edge
   reach / flat areas / column-0 quirk.
 
-## OLMDistanceGradation (0.8.2 ALPHA; source verified, Mac host test pending)
+## OLMDistanceGradation (0.8.2 reference below; now 0.8.3 — see the 2026-11-20 summary)
+
+> 0.8.3 adds Use Padding / I_EXPAND_BUFFER / a new PRE_RENDER, changes the normalise
+> beta and the Both-mode combine, raises slider_max to 1000. Addresses moved; see spec.
 
 Reference `.opencode/olm-opentools-windows/OLMDistanceGradation/DistanceGradation.aex`
 (26 MB: **OpenCV 4.5.5 + IPP statically linked**; the plug-in itself is ~25
@@ -704,7 +755,10 @@ used, following OpenCV's arithmetic — no OpenCV dependency.
   all interpolations, Invert, Layer/RGB/BG, degenerate, downsample scaling,
   Gaussian/box blur, 8/16/32 bpc.
 
-## OLMSmoother2 (2.1.0; fixed 2026-10-08, Mac rebuild + AE retest pending)
+## OLMSmoother2 (2.1.0 reference below; now 2.2.0 — see the 2026-11-20 summary)
+
+> 2.2.0 adds Oklab, float Smooth Range, the b3 edge rule and the writer clamp; the
+> MLAA core described below is byte-identical in 2.2.
 
 Reference `.opencode/olm-opentools-windows/OLMSmoother2AE/OLMSmoother2.aex`
 (192 KB, MyEffect framework, OpenMP, no OpenCV). Decompile was started in an
@@ -938,38 +992,28 @@ backward pass, and the merge early-out in IDA (instance `7e249916d6bc`).
 
 ## Next steps
 
-**The port is done. All that is left is: compile on macOS, then smoke-test each
-plug-in in After Effects.** No more decompiling or implementation is expected
-unless a smoke test turns up a bug.
-
-1. **Compile (Mac).** `./build-all.sh` → signed `.plugin` bundles in `./dist`
-   (see "Build"). If one fails, build it alone for a clean log:
-   `cmake -S <Dir> -B build-<name> -DAE_SDK=<…MacOS…/Examples>
-   -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release &&
-   cmake --build build-<name>`. AppleClang is stricter than MinGW — expect the
-   occasional new warning-as-error; fix in the plug-in source, keep the math
-   identical to the verified section below.
-
-2. **Install + smoke-test in AE, one at a time.** Copy the `.plugin` from `dist`
-   into AE's Plug-ins folder, **clear AE's plug-in cache** (Preferences, or
-   delete the cache dir), relaunch. A stale cache is the #1 cause of "the effect
-   did nothing" — always rule it out first. The effect appears under
-    `OLM Plug-ins`. Per-plug-in expectations (Blur, DistanceGradation,
-    ColorKeep already user-confirmed working):
-    - **OLMSmoother2AE** (fixed 2026-10-08 — **rebuild from latest first**):
-      default v2 now smooths edges like Windows (run-gated corners fixed);
-      Smoothness 0 ≈ pass-through (v2 still round-trips sRGB); Enable Color Key
-      punches the picked color to transparent.
-       - **OLMToonDilate** (user's next test target): grows fully-opaque edges outward by Search Radius using
-     nearest-opaque color (Chebyshev); Search Radius 0 = pass-through.
-   - **OLMKiraKira**: 4-armed sparkle + highlight glow on bright/opaque areas;
-     Use Ramp greys the flat Color picker. The ramp *editor* widget is not
-     ported, so stops can't be redrawn in-UI on Mac (ramps from Win projects
-     still render). Add the PF_Cmd_EVENT draw handler if in-UI editing is wanted.
-
-3. Windows/Mac pixel comparisons are deferred by user; visually close output is
-   the goal, not a measured bit-exact parity claim.
-
-4. If the noise field index safety wrap matters for parity, match the original
-   OOB behaviour behind a flag once the exact table-adjacent bytes in the
-   original buffer are known.
+1. **Compile (Mac).** `./build-all.sh` → 11 signed bundles in `./dist`. If one fails,
+   build it alone (`cmake -S <Dir> -B build-<name> …`). AppleClang is stricter than
+   MinGW; fix warnings-as-errors in the plug-in source without changing the math.
+2. **Install + smoke-test the 6 changed/new plug-ins in AE**, one at a time, after
+   **clearing AE's plug-in cache** (stale cache = #1 cause of "nothing changed"):
+   - **ColorKey 2.3.3**: Number of Colors goes to 200; slots past 25 appear and key.
+     Old projects still open with their colours.
+   - **ColorKeep 1.1.0**: listed as `OLM Color Keep`; Enabled Color Num up to 200,
+     unused Color pickers hidden; keeps pixels whose RGB matches a picked colour
+     regardless of their alpha; RGB never changes, only alpha.
+   - **Smoother v2 2.2.0**: Smoother Version shows `v1 (sRGB) / v2 (Linear) /
+     v2 (Oklab)`; in Oklab the gamma controls grey out/hide; Smooth Range accepts
+     decimals. Check an old project's Smooth Range value survives the int→float change.
+   - **DistanceGradation 0.8.3**: `Use Padding` on + Outside/Both lets the gradation
+     extend past the layer bounds (buffer expands); thresholds slide to 1000.
+   - **AntiAntiAlias (new)**: on an anti-aliased flat-colour image, Initialize Colors
+     fills the list + count; output has hard edges in those colours; Add automatic
+     colors appends; Clear blacks the list; unused slots hidden.
+   - **UVMap (new)**: apply to a UV-map layer (16 bpc recommended), pick a Texture
+     layer; Nearest/Bilinear/Trilinear map the texture; Smoothness greys out unless
+     Trilinear. If Trilinear errors "Trilinear invoked without mipmaps", sequence data
+     is not reaching SMART_RENDER — investigate there.
+3. Windows/Mac pixel comparisons remain deferred; residuals are listed per plug-in.
+4. Optional parity polish (not requested): `-ffp-contract=off` for the other ports'
+   AppleClang builds (only Smoother sets it); the DirectionalBlur noise-index wrap.

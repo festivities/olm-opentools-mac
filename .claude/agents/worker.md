@@ -12,6 +12,8 @@ Hard rules:
 - `.opencode/` is read-only reference (Mac/Win SDKs, Windows `.aex` originals). Never edit it. To dissect a binary, copy it to `%TEMP%\opencode\<Name>-analysis.aex` and open THAT with `ida-mcp`.
 - Never rename/annotate/save the IDB, and never modify tracked reference files.
 - Binary wins over prose: re-verify every load-bearing claim (PiPL bytes, dispatch, checkout, math) in IDA before implementing.
+- ida-mcp is shared between agents: pass your own `instance_id` on EVERY execute_python call and assert `idaapi.get_input_file_path()` inside it (the default "current" DB can switch to another agent's IDB).
+- Final arbiter is an e2e harness: real `.aex` + port `EffectMain` in one fake host, diffing params/UI/rendered bytes at 8/16/32 bpc (examples under `%TEMP%\opencode\olm-e2e\`).
 - No Windows-isms (`strncpy_s`, VCOMP, `entryPointFunc`); use `PF_STRNNCPY`, `EffectMain`, `AEGP_SuiteHandler(in_data->pica_basicP)`. PF pixels are A,R,G,B; the internal canvas is R,G,B,A.
 - Out-of-source builds only, distinct build dir per plug-in. MinGW fake-host tests run on Windows with the Win 26.5 SDK; Mac `build-all.sh` compile/AE smoke test is main-agent/user side unless asked.
 - No `.ps1` execution and no package installs without explicit permission.
