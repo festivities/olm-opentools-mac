@@ -15,15 +15,15 @@ No source code is provided for the originals, so each plug-in was reverse-engine
 |---|---|---|
 | OLM DirectionalBlur | 1.1.1 | ✅ Verified in Mac AE |
 | OLM RadialBlur | 1.3.0 | ✅ Verified in Mac AE |
-| OLM Color Key | 2.3.3 | Updated — Mac AE verify pending |
-| OLM Color Keep | 1.1.0 | Updated — Mac AE verify pending |
+| OLM Color Key | 2.3.3 | ✅ Verified in Mac AE |
+| OLM Color Keep | 1.1.0 | ✅ Verified in Mac AE |
 | OLM Blur | 1.2.1 | ✅ Verified in Mac AE |
-| Distance Gradation | 0.8.3 | Updated — Mac AE verify pending |
-| OLM Smoother v2 | 2.2.0 | Updated — Mac AE verify pending |
+| Distance Gradation | 0.8.3 | ✅ Verified in Mac AE |
+| OLM Smoother v2 | 2.2.0 | ✅ Verified in Mac AE |
 | OLM Toon Dilate | 1.1.1 | ✅ Verified in Mac AE |
 | OLM Kira Kira | 3.3 | ✅ Verified in Mac AE |
-| OLM Anti Anti Alias | 1.1.6 | New — Mac AE verify pending |
-| OLM UV Map | 1.1.1 | New — Mac AE verify pending |
+| OLM Anti Anti Alias | 1.1.6 | ✅ Verified in Mac AE |
+| OLM UV Map | 1.1.1 | ✅ Verified in Mac AE |
 
 In After Effects they appear under the **`OLM Plug-ins`** effect category.
 
@@ -80,9 +80,16 @@ This project was developed with AI assistance. The reverse-engineering of the Wi
 
 ### License
 
-No license is granted for this repository.
+OLM Digital R&amp;D distributes OLM OpenTools under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) ("OLM OpenTools are licensed under the Apache License, Version2.0", [OpenTools](https://www.olm.co.jp/rd/categories/opentools)). That statement appears on the official pages for these 8 originals: Smoother v2, Anti Anti Alias, UV Map, Color Key, Distance Gradation, Color Keep, Directional Blur and Toon Dilate.
 
-It is a decompilation / reimplementation of the original software, which puts it in a legal grey area, and I'm not in a position to assign a redistribution license. All rights to the originals belong to [OLM Digital R&amp;D](https://www.olm.co.jp/rd/categories/opentools).
+The license allows preparing and distributing Derivative Works of the Work in Source or Object form (Section 2). No source code was published for the originals, so these ports are Derivative Works reimplemented from the Windows binaries, and they are distributed under the same Apache License 2.0 (see [`LICENSE`](LICENSE)).
+
+> [!WARNING]
+> **OLM Blur, OLM RadialBlur and OLM Kira Kira** have no OpenTools page with a license statement that I could find, so their license is unconfirmed. Treat their ports as unlicensed until OLM publishes terms for them.
+
+Every plug-in here is a reimplementation for macOS (new source code, an AE 26.5 Mac SDK build and Mac packaging). Per-plug-in differences from the Windows binaries are documented in [`.agents/AGENTS.md`](.agents/AGENTS.md).
+
+The license does not grant trademark rights (Section 6). "OLM", "OLM OpenTools" and the plug-in names are used only to identify the original work. All rights to the originals belong to [OLM Digital R&amp;D](https://www.olm.co.jp/rd/categories/opentools).
 
 ### Credits
 
