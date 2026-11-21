@@ -554,6 +554,11 @@ then: group-end defs carry names ("Sharp Tail" ×2, "Thickness") like the binary
   `size_t`. Fixed by reading `c.A[c.pix(x ± k, y) * 4u + 3u]`.
   Lesson: the binary indexes the canvas in *float* units (`a3 + 4*v15 + 12` where
   `v15 = 4*pixel`); always convert pixel↔float explicitly in the port.
+- **"Couldn't find main entry point for OLMAntiAntiAlias.plugin (48 :: 72)"** (2026-11-21) →
+  `OLMAntiAntiAlias.h` lacked the `extern "C" { DllExport PF_Err EffectMain(...); }`
+  declaration every other port has, so the symbol was C++-mangled and AE's lookup of the
+  PiPL entry name failed. Fake-host tests can't catch this (they call `EffectMain` directly);
+  check `nm` shows a plain `EffectMain` for any new port.
 - After updating a plug-in, AE may continue displaying/using its cached copy. The user confirmed
   the Alpha Fade fix worked after clearing AE's cache; check cache/restart before concluding a
   rebuilt plug-in has no effect.
